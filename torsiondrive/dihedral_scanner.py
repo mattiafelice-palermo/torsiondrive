@@ -16,7 +16,7 @@ from warnings import warn
 import numpy as np
 from geometric.molecule import Molecule
 from .priority_queue import PriorityQueue
-
+from datetime import datetime
 
 def normalize_dihedral(d):
     """ Normalize any number to the range (-180, 180], including 180 """
@@ -604,12 +604,21 @@ class DihedralScanner:
         # get a new folder
         new_job_path = self.get_new_scr_folder(grid_id)
         if self.verbose:
-            print("Launching new job at %s" % new_job_path)
+            format = "%m/%d/%Y, %H:%M:%S"
+            start_time = datetime.now()
+            start_time_pretty = start_time.strftime(format)
+            calculation_name = new_job_path.split("gid_")[1]
+            print(f"{calculation_name} - Started: {start_time_pretty}", end="", flush=True)
+        print(" ", end="", flush=True )
         # launch optimization job inside scratch folder
         self.engine.M = copy.deepcopy(molecule)
         self.engine.extra_constraints = self.extra_constraints
         self.engine.set_dihedral_constraints(dihedral_idx_values)
         self.engine.launch_optimize(new_job_path)
+        final_time = datetime.now()
+        final_time_pretty = final_time.strftime(format)
+        elapsed = final_time - start_time
+        print(f"| Finished: {final_time_pretty} | Elapsed: {elapsed}")
         return new_job_path
 
     def get_new_scr_folder(self, grid_id):

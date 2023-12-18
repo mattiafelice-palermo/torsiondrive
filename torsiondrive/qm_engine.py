@@ -1,6 +1,7 @@
 import os
 import subprocess
 import warnings
+from subprocess import CalledProcessError
 
 import numpy as np
 import copy
@@ -103,7 +104,10 @@ class QMEngine(object):
         if output_files is None:
             output_files = []
         if self.work_queue is None:
-            subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                output = subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except CalledProcessError as exc:
+                print(exc.output)
         else:
             self.work_queue.submit(cmd, input_files, output_files)
 
@@ -207,6 +211,7 @@ class EngineOpenMM(QMEngine):
                  input_files=['input.xml', 'input.pdb', 'constraints.txt'],
                  output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
 
+
 class EnginePsi4(QMEngine):
     def load_input(self, input_file):
         """ Load a Psi4 input file as a Molecule object into self.M
@@ -300,12 +305,13 @@ class EnginePsi4(QMEngine):
         if self.extra_constraints is not None:
             raise RuntimeError('extra constraints not supported in Psi4 native optimizations')
         # add the optking command
-        self.optkingStr = '\nset optking {\n  fixed_dihedral = ("\n'
+        self.optkingStr = '\nset optking {\n  ranged_dihedral = ("\n'
         for d1, d2, d3, d4, v in self.dihedral_idx_values:
             # Optking use atom index starting from 1
-            self.optkingStr += '        %d  %d  %d  %d  %f\n' % (d1+1, d2+1, d3+1, d4+1, v)
+            self.optkingStr += '        %d  %d  %d  %d  %f\n %f\n' % (d1+1, d2+1, d3+1, d4+1, v, v)
         self.optkingStr += '  ")\n}\n'
         # write input file
+        print(os.getcwd())
         self.write_input('input.dat')
         # run the job
         self.run('psi4 input.dat -o output.dat', input_files=['input.dat'], output_files=['output.dat'])
@@ -322,8 +328,9 @@ class EnginePsi4(QMEngine):
         # step 2
         self.write_input('input.dat')
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --psi4 input.dat constraints.txt'
+        cmd = 'geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine psi4 input.dat constraints.txt'
         self.run(cmd, input_files=['input.dat', 'constraints.txt'], output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+
 
     def load_native_output(self, filename='output.dat'):
         """ Load the optimized geometry and energy into a new molecule object and return """
@@ -332,8 +339,8 @@ class EnginePsi4(QMEngine):
         with open(filename) as outfile:
             for line in outfile:
                 line = line.strip()
-                if line.startswith('Final energy is'):
-                    final_energy = float(line.split()[-1])
+                if line.startswith('Total Energy              ='):
+                    final_energy = float(line.split()[-2])
                 elif line.startswith('Final optimized geometry and variables'):
                     found_opt_result = True
                 elif found_opt_result:
