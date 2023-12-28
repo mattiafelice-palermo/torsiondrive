@@ -75,6 +75,27 @@ if __name__ == "__main__":
     if missing_deps:
         sys.exit("Error: Missing dependencies:\n- " + "\n- ".join(missing_deps))
 
+    def print_help():
+        help_message = """
+        Usage: script.py [input_log_file] [output_file]
+
+        This script reads a log file, extracts dihedral angles and energies,
+        normalizes the energies, and plots them. The output format is determined by the output file extension.
+
+        Arguments:
+        input_log_file    - Optional: Path to the input log file. Default is 'td_log.log'.
+        output_file       - Optional: Path to the output file. Default is 'scan.pdf'.
+
+        Example:
+        script.py                           # Uses default 'td_log.log' and outputs to 'scan.pdf'
+        script.py custom_log.log results.pdf  # Uses 'custom_log.log' and outputs to 'results.pdf'
+        """
+        print(help_message)
+
+    if sys.argv[1] in ["-h", "--help"]:
+        print_help()
+        sys.exit(0)
+
     import seaborn as sns
     import matplotlib.pyplot as plt
 
