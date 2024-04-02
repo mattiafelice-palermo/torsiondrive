@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-#=================================================#
-#| Minimum-energy multi-dimensional torsion scan |#
-#|         Yudong Qiu, Lee-Ping Wang             |#
-#================================================#
+# =================================================#
+# | Minimum-energy multi-dimensional torsion scan |#
+# |         Yudong Qiu, Lee-Ping Wang             |#
+# ================================================#
 import collections
 import copy
 import itertools
@@ -17,10 +17,15 @@ import numpy as np
 from geometric.molecule import Molecule
 from .priority_queue import PriorityQueue
 from datetime import datetime
+import logging
+
+logger = logging.getLogger("yamlLogger")
+
 
 def normalize_dihedral(d):
-    """ Normalize any number to the range (-180, 180], including 180 """
-    return d + (180-d)//360*360
+    """Normalize any number to the range (-180, 180], including 180"""
+    return d + (180 - d) // 360 * 360
+
 
 def get_geo_key(coords):
     """
@@ -30,13 +35,15 @@ def get_geo_key(coords):
     """
     return (coords * 1000).astype(int).tobytes()
 
+
 def norm3(vec3):
     """
     Quick convenient function to get the norm of a 3-element vector
     norm3: 475 ns | np.linalg.norm: 4.31 us
     """
     a, b, c = vec3
-    return (a*a + b*b + c*c)**0.5
+    return (a * a + b * b + c * c) ** 0.5
+
 
 def cross3(v1, v2):
     """
@@ -45,9 +52,8 @@ def cross3(v1, v2):
     """
     a1, a2, a3 = v1
     b1, b2, b3 = v2
-    return [a2 * b3 - a3 * b2,
-            a3 * b1 - a1 * b3,
-            a1 * b2 - a2 * b1]
+    return [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
+
 
 def dot3(v1, v2):
     """
@@ -56,7 +62,7 @@ def dot3(v1, v2):
     """
     a1, a2, a3 = v1
     b1, b2, b3 = v2
-    return a1*b1 + a2*b2 + a3*b3
+    return a1 * b1 + a2 * b2 + a3 * b3
 
 
 def measure_dihedrals(molecule, dihedral_list, check_linear=True, check_bonded=True):
@@ -78,13 +84,13 @@ def measure_dihedrals(molecule, dihedral_list, check_linear=True, check_bonded=T
     if check_bonded:
         # collect all bonds needs to be checked from dihedral_list
         bonds_to_check = set()
-        for i,j,k,l in dihedral_list:
-            for b1, b2 in [(i,j), (j,k), (k,l)]:
-                bonds_to_check.add((b1,b2) if b1 <= b2 else (b2,b1))
+        for i, j, k, l in dihedral_list:
+            for b1, b2 in [(i, j), (j, k), (k, l)]:
+                bonds_to_check.add((b1, b2) if b1 <= b2 else (b2, b1))
         # build bonds for m if not available
-        if 'bonds' not in molecule.Data:
+        if "bonds" not in molecule.Data:
             molecule.build_bonds()
-        all_bonds = set((b1,b2) for b1, b2 in molecule.bonds)
+        all_bonds = set((b1, b2) for b1, b2 in molecule.bonds)
         # check bonds not found
         bonds_to_check.difference_update(all_bonds)
         if len(bonds_to_check) > 0:
@@ -98,14 +104,14 @@ def measure_dihedrals(molecule, dihedral_list, check_linear=True, check_bonded=T
         v1 = (coords[1] - coords[0]).tolist()
         v2 = (coords[2] - coords[1]).tolist()
         v3 = (coords[3] - coords[2]).tolist()
-        n2 = norm3(v2) # computed here to use later
+        n2 = norm3(v2)  # computed here to use later
         if check_linear:
             n1, n3 = norm3(v1), norm3(v3)
-            dist_thresh = 1e-6 # threshold for distance between two atoms
+            dist_thresh = 1e-6  # threshold for distance between two atoms
             if n1 < dist_thresh or n2 < dist_thresh or n3 < dist_thresh:
                 warn(f"Two atoms have same coordinate for dihedral {dihedral}", UserWarning)
             else:
-                angle_cos_thresh = 0.9659258 # cos(15 degree)
+                angle_cos_thresh = 0.9659258  # cos(15 degree)
                 # if angle(v1, v2) < 15 degree means i-j-k > 165 degree
                 if dot3(v1, v2) > n1 * n2 * angle_cos_thresh or dot3(v2, v3) > n2 * n3 * angle_cos_thresh:
                     warn(f"Angle close to straight found in dihedral {dihedral}", UserWarning)
@@ -118,6 +124,7 @@ def measure_dihedrals(molecule, dihedral_list, check_linear=True, check_bonded=T
         v_dihedral = np.arctan2(n2 * dot3(v1, c23), dot3(c12, c23)) * rad_2_deg
         dihedral_values.append(v_dihedral)
     return np.array(dihedral_values)
+
 
 class DihedralScanner:
     """
@@ -147,56 +154,93 @@ class DihedralScanner:
     verbose: bool
         let methods print more information when running
     """
-    def __init__(self, engine, dihedrals, grid_spacing, init_coords_M=None, energy_decrease_thresh=None, dihedral_ranges=None, energy_upper_limit=None, extra_constraints=None, verbose=False):
+
+    def __init__(
+        self,
+        engine,
+        dihedrals,
+        grid_spacing,
+        init_coords_M=None,
+        energy_decrease_thresh=None,
+        dihedral_ranges=None,
+        energy_upper_limit=None,
+        extra_constraints=None,
+        verbose=False,
+    ):
         self.engine = engine
         # store verbose flag for later printing
         self.verbose = verbose
+
         # validate input dihedral format
         self.dihedrals = []
         for dihedral in dihedrals:
             assert len(dihedral) == 4, "each dihedral in dihedrals should have 4 indices, e.g. (1,2,3,4)"
             dihedral_tuple = tuple(map(int, dihedral))
-            assert dihedral_tuple not in self.dihedrals and dihedral_tuple[::-1] not in self.dihedrals, "All dihedrals should be unique"
+            assert (
+                dihedral_tuple not in self.dihedrals and dihedral_tuple[::-1] not in self.dihedrals
+            ), "All dihedrals should be unique"
             self.dihedrals.append(dihedral_tuple)
         self.grid_dim = len(self.dihedrals)
         for gs in grid_spacing:
-            assert (0 < gs < 360) and (360 % gs == 0), f"grid_spacing {grid_spacing} is not valid, all values should be a divisor of 360"
-        assert len(grid_spacing) == self.grid_dim, f"Number of grid spacings {len(grid_spacing)} is not consistent with number of dihedrals {self.grid_dim}"
+            assert (0 < gs < 360) and (
+                360 % gs == 0
+            ), f"grid_spacing {grid_spacing} is not valid, all values should be a divisor of 360"
+        assert (
+            len(grid_spacing) == self.grid_dim
+        ), f"Number of grid spacings {len(grid_spacing)} is not consistent with number of dihedrals {self.grid_dim}"
         self.grid_spacing = tuple(map(int, grid_spacing))
         self.setup_grid()
+
         # validate dihedral ranges and build mask
-        self.dihedral_ranges = dihedral_ranges if dihedral_ranges is not None else [] # for sanity check
+        self.dihedral_ranges = dihedral_ranges if dihedral_ranges is not None else []  # for sanity check
         self.dihedral_mask = self.build_dihedral_mask(dihedral_ranges)
+
         # energy limit for high energy points
         self.global_minimum_energy = None
         self.energy_upper_limit = float(energy_upper_limit) if energy_upper_limit is not None else None
+
         # extra_constraints does not change, will be passed to engine for generating input files
         self.extra_constraints = extra_constraints
+
         # create a optiimization job queue
         self.opt_queue = PriorityQueue()
+
         # try to use init_coords_M first, if not given, use M in engine's template
         # `for m in init_coords_M` doesn't work since m.measure_dihedrals will fail because it has different m.xyzs shape
-        self.init_coords_M = [init_coords_M[i] for i in range(len(init_coords_M))] if init_coords_M is not None else [self.engine.M]
+        self.init_coords_M = (
+            [init_coords_M[i] for i in range(len(init_coords_M))] if init_coords_M is not None else [self.engine.M]
+        )
+
         # dictionary that stores the lowest energy for each grid point
         self.grid_energies = dict()
+
+        # Jobs that failed to be optimized
+        self.grid_failed = {}
+
         # dictionary that stores the geometries corresponding to lowest energy for each grid point
         self.grid_final_geometries = dict()
+
         # dictionary that stores the gradients to lowest energy for each grid point (optional)
         self.grid_final_gradients = dict()
+
         # save current path as the rootpath
         self.rootpath = self.engine.rootpath = os.getcwd()
+
         # path for temporary optimization files to be saved
-        self.tmp_folder_name = 'opt_tmp'
+        self.tmp_folder_name = "opt_tmp"
+
         # task cache for restoring
         self.task_cache = collections.defaultdict(dict)
+
         # filename for storing finished task result
-        self.task_result_fname = 'dihedral_scanner_task_result.p'
+        self.task_result_fname = "dihedral_scanner_task_result.p"
+
         # threshold for determining the energy decrease
         self.energy_decrease_thresh = energy_decrease_thresh if energy_decrease_thresh is not None else 1e-5
 
-    #----------------------
+    # ----------------------
     # Initializing methods
-    #----------------------
+    # ----------------------
 
     def setup_grid(self):
         """
@@ -211,12 +255,14 @@ class DihedralScanner:
         """
         self.grid_axes = []
         for gs in self.grid_spacing:
-            self.grid_axes.append(range(-180+gs, 180+gs, gs))
+            self.grid_axes.append(range(-180 + gs, 180 + gs, gs))
         self.grid_ids = tuple(itertools.product(*self.grid_axes))
 
     def build_dihedral_mask(self, dihedral_ranges):
         """
-        Build a dihedral mask based on specified ranges
+        Build a dihedral mask based on specified ranges. The dihedral mask is useful when the user specifies
+        dihedral ranges, e.g. [80, 240], which effectively become [-180, 120] + [80, 180]. The mask therefore hides
+        the dihedrals that are not in the specified ranges.
 
         Parameters
         ----------
@@ -235,17 +281,21 @@ class DihedralScanner:
         -----
         This function should be called after self.setup_grid()
         """
-        if not dihedral_ranges: return None
-        assert all(l >= -180 and u <= 360 and l < u for l, u in dihedral_ranges), \
-            f'Dihedral ranges {dihedral_ranges} mistaken, range should be within [-180, 360]'
-        assert len(dihedral_ranges) == len(self.dihedrals), f'Dihedral ranges {dihedral_ranges} do not have consistent length to dihedrals {self.dihedrals}'
+        if not dihedral_ranges:
+            return None
+        assert all(
+            l >= -180 and u <= 360 and l < u for l, u in dihedral_ranges
+        ), f"Dihedral ranges {dihedral_ranges} mistaken, range should be within [-180, 360]"
+        assert len(dihedral_ranges) == len(
+            self.dihedrals
+        ), f"Dihedral ranges {dihedral_ranges} do not have consistent length to dihedrals {self.dihedrals}"
         if self.verbose:
             print(f"Dihedral scan initialized with range limit {dihedral_ranges}")
         dihedral_mask = []
         for (l, u), ax in zip(dihedral_ranges, self.grid_axes):
             if u > 180:
                 # the "split range" case
-                dmask = {g for g in ax if g >= l or g <= u-360}
+                dmask = {g for g in ax if g >= l or g <= u - 360}
             else:
                 # the normal case
                 dmask = {g for g in ax if l <= g <= u}
@@ -257,9 +307,9 @@ class DihedralScanner:
             dihedral_mask.append(dmask)
         return dihedral_mask
 
-    #--------------------
+    # --------------------
     #  General methods
-    #--------------------
+    # --------------------
 
     def get_dihedral_id(self, molecule, check_grid_id=None):
         """
@@ -272,9 +322,9 @@ class DihedralScanner:
             assert len(check_grid_id) == len(dihedral_values), "Grid dimensions should be the same!"
             for dv, dref in zip(dihedral_values, check_grid_id):
                 diff = abs(dv - dref)
-                if min(diff, abs(360-diff)) > 0.5:
+                if min(diff, abs(360 - diff)) > 0.5:
                     print("Warning! dihedral values inconsistent with check_grid_id")
-                    print(f'dihedral_values {dihedral_values}; check_grid_id {check_grid_id}')
+                    print(f"dihedral_values {dihedral_values}; check_grid_id {check_grid_id}")
                     return None
         # here we shift the dihedral by +180 then shift back because -180 is the actual origin of the grid
         # this allows grid_spacing of 24
@@ -283,7 +333,7 @@ class DihedralScanner:
         return tuple([normalize_dihedral(d) for d in dihedral_id])
 
     def grid_neighbors(self, grid_id):
-        """ Take a center grid id, return all the neighboring grid ids, in each dimension """
+        """Take a center grid id, return all the neighboring grid ids, in each dimension"""
         neighbor_gridids = []
         for i_dim in range(len(grid_id)):
             gs = self.grid_spacing[i_dim]
@@ -296,7 +346,7 @@ class DihedralScanner:
         return tuple(neighbor_gridids)
 
     def grid_full_neighbors(self, grid_id):
-        """ Take a center grid id, return all the neighboring grid ids, in all dimensions """
+        """Take a center grid id, return all the neighboring grid ids, in all dimensions"""
         # Note: This function is not in use now, because it's very expensive (and probably unnecessary)
         neighbor_gids_each_dim = []
         for gid_each_dim, gs in zip(grid_id, self.grid_spacing):
@@ -305,9 +355,9 @@ class DihedralScanner:
             neighbor_gids_each_dim.append((lower_neighbor, higher_neighbor))
         return tuple(itertools.product(*neighbor_gids_each_dim))
 
-    #----------------------
+    # ----------------------
     # Master method
-    #----------------------
+    # ----------------------
     def master(self):
         """
         The master function that calls all other functions.
@@ -322,8 +372,10 @@ class DihedralScanner:
         if len(self.opt_queue) == 0:
             print("No tasks in opt_queue! Exiting..")
             return
+
         # make sure we're in the rootpath
         os.chdir(self.rootpath)
+
         # check if the tmp folder exists
         if os.path.isdir(self.tmp_folder_name):
             # use existing tmp folder and read task cache
@@ -331,26 +383,39 @@ class DihedralScanner:
         else:
             # setup new tmp folders
             self.create_tmp_folder()
+
         # dictionary that saves the information for each running job, like orig m, orig grid_id, target grid_id
+        # NOTE: what information??
         self.running_job_path_info = dict()
+
         # Queue that saves the finished job results for each iteration
         # In each iteration, this will be populated by job results from task cache, and from new calculations
         # After parsing the finished jobs, this will emptied for the next iteration
         # We used a PriorityQueue here so the order of parsing finished jobs will be kept
         self.current_finished_job_results = PriorityQueue()
+
         # print scan status interval
         start_time = last_print_time = time.time()
+
         # the minimum time interval between prints
-        min_print_interval = -1 # Disabled for now
+        min_print_interval = -1  # Disabled for now
+
         # store the grid ids that have found lower energy than existing one, for draw_ramachandran_plot()
         self.refined_grid_ids = set()
+
         # save the status of grid from beginning of run, useful when generating state files
         # self.grid_status = collections.defaultdict(list)
+
+        counter = 0
+
         while True:
+            counter += 1
+            logger.debug(f"###---------- ITERATION {counter} ----------###")
+
             # check if it's time to show the status
             current_time = time.time()
             if self.verbose and current_time - last_print_time > min_print_interval:
-                print("Scan Status at %d s" % (current_time-start_time))
+                print("Scan Status at %d s" % (current_time - start_time))
                 try:
                     if len(self.dihedrals) == 2:
                         print(self.draw_ramachandran_plot())
@@ -359,65 +424,118 @@ class DihedralScanner:
                 except UnicodeEncodeError:
                     print("Warning: UnicodeEncodeError occured, status map not printed.")
                 last_print_time = current_time
+
             # Launch all jobs in self.opt_queue
             # new jobs will be put into self.running_job_path_info
             # job results found in self.task_cache will be added to self.current_finished_job_results
             self.launch_opt_jobs()
+
             # wait until all jobs finish, take out from self.running_job_path_info
+            logger.debug("Entering in the loop where we wait calculations to finish")
+
             while len(self.running_job_path_info) > 0:
-                self.wait_extract_finished_jobs()
+                logger.debug(f"Length of running_job_path_info: {len(self.running_job_path_info)}")
+                logger.debug(f"Content of self.running_job_path_info:\n {self.running_job_path_info}")
+                self.wait_extract_finished_jobs()  # here the geometry gets extracted
+                logger.debug("Calculations finished and structures have been extracted")
+
+            # Probably self.current_finished_job_results returns something like:
+            # {'opt_tmp/gid_-060/6': (<geometric.molecule.Molecule object at 0x7fd285e43790>, (-60,), (-60,))}
+            # Although I think it's a PriorityQueue instance, because if empty returns:
+            # <torsiondrive.priority_queue.PriorityQueue object at 0x7fd285e43910>
+            # Therefore PriorityQueue({'job_path': (m, grid_id)})
+            # grid_id is probably  (-60,), (-60,)
+
             # check all finished jobs and keep the best ones for the current iteration
             current_best_grid_m = dict()
+            logger.debug(f"Length of current_finished_job_results: {len(self.current_finished_job_results)}")
             while len(self.current_finished_job_results) > 0:
                 m, grid_id = self.current_finished_job_results.pop()
-                if grid_id not in current_best_grid_m or m.qm_energies[0] < current_best_grid_m[grid_id].qm_energies[0]:
+                if m.qm_energies[0] is None:
+                    print(f"HEY I FAILED {grid_id}")
+                    self.grid_failed[grid_id] = m
+                    continue
+                if (
+                    grid_id not in current_best_grid_m
+                    or m.qm_energies[0] < current_best_grid_m[grid_id].qm_energies[0]
+                ):
                     current_best_grid_m[grid_id] = m
+
+            logger.debug(f"current_best_grid_m: {current_best_grid_m}")
+
             # we only want refined results in current iteration to show in draw_ramachandran_plot()
             self.refined_grid_ids = set()
+
             # compare the best results between current iteration and all previous iterations
+            # newly_updated_grid_m will contain (grid_id, m) for new angles calculated in this cycle OR angles for which energy decreased
             newly_updated_grid_m = []
             for grid_id, m in current_best_grid_m.items():
                 energy = m.qm_energies[0]
+
                 # update current global minimum
                 if self.global_minimum_energy is None or energy < self.global_minimum_energy:
                     self.global_minimum_energy = energy
+
                 updating_grid_point = False
                 if grid_id not in self.grid_energies:
                     if self.verbose:
                         print(f"First energy for grid_id {grid_id} = {energy}")
                     updating_grid_point = True
+
+                # Check if there's already an option to set this to 0. My hunch is that setting this to zero
+                # will lead to more "consecutive" geometries at the expense of computational time
+                # self.energy_decrease_thresh = 0
+
                 elif energy < self.grid_energies[grid_id] - self.energy_decrease_thresh:
                     if self.verbose:
                         print(f"Energy for grid_id {grid_id} decreased from {self.grid_energies[grid_id]} to {energy}")
                     updating_grid_point = True
+
                     # we record the refined_grid_ids here to be printed as green tiles in draw_ramachandran_plot()
                     self.refined_grid_ids.add(grid_id)
+
                 if updating_grid_point:
                     self.grid_energies[grid_id] = energy
                     self.grid_final_geometries[grid_id] = m.xyzs[0]
-                    if hasattr(m, 'qm_grads'):
+                    if hasattr(m, "qm_grads"):
                         self.grid_final_gradients[grid_id] = m.qm_grads[0]
                     newly_updated_grid_m.append((grid_id, m))
+
             # create new tasks for each newly_updated_grid_m
+
+            logger.debug(f"self.grid_failed: {self.grid_failed}")
+
+            for grid_id, m in self.grid_failed.items():
+                if grid_id not in self.grid_energies:
+                    newly_updated_grid_m.append((grid_id, m))
+
             for grid_id, m in newly_updated_grid_m:
                 # every neighbor grid point will get one new task
-                for neighbor_gid in self.grid_neighbors(grid_id):
-                    task = m, grid_id, neighbor_gid
+                for neighbor_grid_id in self.grid_neighbors(grid_id):
+                    task = m, grid_id, neighbor_grid_id
                     # validate task before pushing
                     if self.validate_task(task):
                         # all jobs are pushed with the same priority for now, can be adjusted here
                         self.opt_queue.push(task)
+
             # check if all jobs finished
             if len(self.opt_queue) == 0 and len(self.running_job_path_info) == 0:
                 print("All optimizations converged at lowest energy. Job Finished!")
                 break
+
+        print("Scan Status at %d s" % (current_time - start_time))
+
+        if len(self.dihedrals) == 2:
+            print(self.draw_ramachandran_plot())
+        else:
+            print(self.draw_ansi_image())
+
         # the finish function will write files like scan.xyz, qdata.txt to disk
         self.finish()
 
-
-    #----------------------------------
+    # ----------------------------------
     # Utility methods Called by Master
-    #----------------------------------
+    # ----------------------------------
 
     def validate_task(self, task):
         """
@@ -436,6 +554,7 @@ class DihedralScanner:
         """
         m, from_grid_id, to_grid_id = task
         # check if dihedral is in mask
+        logger.debug(f"self.dihedral_mask: {self.dihedral_mask}")
         if self.dihedral_mask is not None:
             for d, dmask in zip(to_grid_id, self.dihedral_mask):
                 if d not in dmask:
@@ -444,12 +563,14 @@ class DihedralScanner:
                     return False
         # check if energy is higher than limit
         if self.energy_upper_limit is not None:
-            if self.global_minimum_energy is not None and hasattr(m, 'qm_energies') and len(m.qm_energies) > 0:
+            if self.global_minimum_energy is not None and hasattr(m, "qm_energies") and len(m.qm_energies) > 0:
                 abs_energy_upper_limit = self.global_minimum_energy + self.energy_upper_limit
                 if m.qm_energies[0] > abs_energy_upper_limit:
                     if self.verbose:
                         print(f"Task {from_grid_id} => {to_grid_id} skipped")
-                        print(f"Reason: starting energy {m.qm_energies[0]} is more than {self.energy_upper_limit} higher than current global minimum {self.global_minimum_energy} in a.u.")
+                        print(
+                            f"Reason: starting energy {m.qm_energies[0]} is more than {self.energy_upper_limit} higher than current global minimum {self.global_minimum_energy} in a.u."
+                        )
                     return False
         return True
 
@@ -472,10 +593,10 @@ class DihedralScanner:
         The format should be consistent with self.restore_task_cache()
         """
         final_energy = m_final.qm_energies[0]
-        task_result = {'initial_geo': m_init.xyzs[0], 'final_geo': m_final.xyzs[0], 'final_energy': final_energy}
-        if hasattr(m_final, 'qm_grads'):
-            task_result['final_gradient'] = m_final.qm_grads[0]
-        with open(os.path.join(self.rootpath, job_path, self.task_result_fname), 'wb') as pickleout:
+        task_result = {"initial_geo": m_init.xyzs[0], "final_geo": m_final.xyzs[0], "final_energy": final_energy}
+        if hasattr(m_final, "qm_grads"):
+            task_result["final_gradient"] = m_final.qm_grads[0]
+        with open(os.path.join(self.rootpath, job_path, self.task_result_fname), "wb") as pickleout:
             pickle.dump(task_result, pickleout)
 
     def restore_task_cache(self):
@@ -493,26 +614,36 @@ class DihedralScanner:
         if self.verbose:
             print("Restoring from %s" % self.tmp_folder_name)
         # check if this scan matches the previous scan
-        settings_fname = os.path.join(self.tmp_folder_name, 'scanner_settings.json')
+        settings_fname = os.path.join(self.tmp_folder_name, "scanner_settings.json")
         with open(settings_fname) as jsonfile:
             scanner_settings = json.load(jsonfile)
         err_msg = " does not match current one, please delete %s to restart" % self.tmp_folder_name
-        assert len(self.dihedrals) == len(scanner_settings['dihedrals']), 'Setting [dihedrals] '+err_msg
-        assert np.array_equal(np.array(self.dihedrals), np.array(scanner_settings['dihedrals'])), 'Setting [dihedrals] '+err_msg
-        assert np.array_equal(self.grid_spacing, scanner_settings['grid_spacing']), 'Setting [grid_spacing] '+err_msg
-        if 'energy_decrease_thresh' in scanner_settings:
-            assert self.energy_decrease_thresh == scanner_settings['energy_decrease_thresh'], 'Setting [energy_decrease_thresh] '+err_msg
-        if 'dihedral_ranges' in scanner_settings:
-            assert np.array_equal(self.dihedral_ranges, scanner_settings['dihedral_ranges']), 'Setting [dihedral_ranges] '+err_msg
-        if 'extra_constraints' in scanner_settings:
-            assert json.dumps(self.extra_constraints, sort_keys=True) == json.dumps(scanner_settings['extra_constraints'], sort_keys=True), 'Setting [extra_constraints] '+err_msg
-        if 'energy_upper_limit' in scanner_settings:
-            assert self.energy_upper_limit == scanner_settings['energy_upper_limit'], 'Setting [energy_upper_limit] '+err_msg
+        assert len(self.dihedrals) == len(scanner_settings["dihedrals"]), "Setting [dihedrals] " + err_msg
+        assert np.array_equal(np.array(self.dihedrals), np.array(scanner_settings["dihedrals"])), (
+            "Setting [dihedrals] " + err_msg
+        )
+        assert np.array_equal(self.grid_spacing, scanner_settings["grid_spacing"]), "Setting [grid_spacing] " + err_msg
+        if "energy_decrease_thresh" in scanner_settings:
+            assert self.energy_decrease_thresh == scanner_settings["energy_decrease_thresh"], (
+                "Setting [energy_decrease_thresh] " + err_msg
+            )
+        if "dihedral_ranges" in scanner_settings:
+            assert np.array_equal(self.dihedral_ranges, scanner_settings["dihedral_ranges"]), (
+                "Setting [dihedral_ranges] " + err_msg
+            )
+        if "extra_constraints" in scanner_settings:
+            assert json.dumps(self.extra_constraints, sort_keys=True) == json.dumps(
+                scanner_settings["extra_constraints"], sort_keys=True
+            ), ("Setting [extra_constraints] " + err_msg)
+        if "energy_upper_limit" in scanner_settings:
+            assert self.energy_upper_limit == scanner_settings["energy_upper_limit"], (
+                "Setting [energy_upper_limit] " + err_msg
+            )
         # read all finished jobs in tmp folder
         self.tmp_folder_dict = dict()
         n_cache = 0
         for grid_id in self.grid_ids:
-            tname = 'gid_' + '_'.join('%+04d' % gid for gid in grid_id)
+            tname = "gid_" + "_".join("%+04d" % gid for gid in grid_id)
             tmp_folder_path = os.path.join(self.tmp_folder_name, tname)
             self.tmp_folder_dict[grid_id] = tmp_folder_path
             existing_job_folders = [os.path.join(tmp_folder_path, f) for f in os.listdir(tmp_folder_path)]
@@ -520,9 +651,14 @@ class DihedralScanner:
                 result_fname = os.path.join(job_folder, self.task_result_fname)
                 if os.path.isfile(result_fname):
                     try:
-                        task_result = pickle.load(open(result_fname, 'rb'))
-                        task_geo_key = get_geo_key(task_result['initial_geo'])
-                        self.task_cache[grid_id][task_geo_key] = (task_result['final_geo'], task_result['final_energy'], task_result.get('final_gradient', None), job_folder)
+                        task_result = pickle.load(open(result_fname, "rb"))
+                        task_geo_key = get_geo_key(task_result["initial_geo"])
+                        self.task_cache[grid_id][task_geo_key] = (
+                            task_result["final_geo"],
+                            task_result["final_energy"],
+                            task_result.get("final_gradient", None),
+                            job_folder,
+                        )
                         n_cache += 1
                     except Exception as e:
                         print(f"Error while loading {result_fname}:" + str(e))
@@ -538,24 +674,24 @@ class DihedralScanner:
         --------
             self.tmp_folder_dict = {(30,-70): "opt_tmp/gid_+030_-070", ..}
         """
-        assert hasattr(self, 'grid_ids'), 'Call self.setup_grid() first'
+        assert hasattr(self, "grid_ids"), "Call self.setup_grid() first"
         os.mkdir(self.tmp_folder_name)
         # save current scan settings
         scanner_settings = {
-            'dihedrals': self.dihedrals,
-            'grid_spacing': self.grid_spacing,
-            'energy_decrease_thresh': self.energy_decrease_thresh,
-            'dihedral_ranges': self.dihedral_ranges,
-            'extra_constraints': self.extra_constraints,
-            'energy_upper_limit': self.energy_upper_limit,
+            "dihedrals": self.dihedrals,
+            "grid_spacing": self.grid_spacing,
+            "energy_decrease_thresh": self.energy_decrease_thresh,
+            "dihedral_ranges": self.dihedral_ranges,
+            "extra_constraints": self.extra_constraints,
+            "energy_upper_limit": self.energy_upper_limit,
         }
-        settings_fname = os.path.join(self.rootpath, self.tmp_folder_name, 'scanner_settings.json')
-        with open(settings_fname, 'w') as jsonfile:
+        settings_fname = os.path.join(self.rootpath, self.tmp_folder_name, "scanner_settings.json")
+        with open(settings_fname, "w") as jsonfile:
             json.dump(scanner_settings, jsonfile)
         # create folders and save their path to self.tmp_folder_dict
         tmp_folder_dict = dict()
         for grid_id in self.grid_ids:
-            tname = 'gid_' + '_'.join('%+04d' % gid for gid in grid_id)
+            tname = "gid_" + "_".join("%+04d" % gid for gid in grid_id)
             tmp_folder_path = os.path.join(self.tmp_folder_name, tname)
             os.mkdir(tmp_folder_path)
             tmp_folder_dict[grid_id] = tmp_folder_path
@@ -569,11 +705,13 @@ class DihedralScanner:
         Else, the task will be launched by self.launch_constrained_opt, and information is saved as
         self.running_job_path_info[job_path] = m, from_grid_id, to_grid_id
         """
-        assert hasattr(self, 'running_job_path_info') and hasattr(self, 'current_finished_job_results')
+        assert hasattr(self, "running_job_path_info") and hasattr(self, "current_finished_job_results")
         while len(self.opt_queue) > 0:
             m, from_grid_id, to_grid_id = self.opt_queue.pop()
+            logger.debug(f"Launching optimization for {to_grid_id} (from {from_grid_id})")
             # check if this job already exists
             m_geo_key = get_geo_key(m.xyzs[0])
+            logger.debug(f"self.task_cache = {self.task_cache}")
             if m_geo_key in self.task_cache[to_grid_id]:
                 final_geo, final_energy, final_gradient, job_folder = self.task_cache[to_grid_id][m_geo_key]
                 result_m = Molecule()
@@ -585,10 +723,12 @@ class DihedralScanner:
                 result_m.build_topology()
                 grid_id = self.get_dihedral_id(result_m, check_grid_id=to_grid_id)
                 if grid_id is None:
-                    print(f"Cached result from {job_folder} is ignored because optimized geometry is far from grid id {to_grid_id}")
+                    print(
+                        f"Cached result from {job_folder} is ignored because optimized geometry is far from grid id {to_grid_id}"
+                    )
                 else:
                     self.current_finished_job_results.push((result_m, grid_id), priority=job_folder)
-                #self.grid_status[to_grid_id].append((m.xyzs[0], final_geo, final_energy))
+                # self.grid_status[to_grid_id].append((m.xyzs[0], final_geo, final_energy))
             else:
                 job_path = self.launch_constrained_opt(m, to_grid_id)
                 self.running_job_path_info[job_path] = m, from_grid_id, to_grid_id
@@ -601,6 +741,7 @@ class DihedralScanner:
         dihedral_idx_values = []
         for dihedral_idxs, dihedral_value in zip(self.dihedrals, grid_id):
             dihedral_idx_values.append(list(dihedral_idxs) + [dihedral_value])
+        logger.debug(f"dihedral_idx_values = {dihedral_idx_values}")
         # get a new folder
         new_job_path = self.get_new_scr_folder(grid_id)
         if self.verbose:
@@ -609,7 +750,7 @@ class DihedralScanner:
             start_time_pretty = start_time.strftime(format)
             calculation_name = new_job_path.split("gid_")[1]
             print(f"{calculation_name} - Started: {start_time_pretty}", end="", flush=True)
-        print(" ", end="", flush=True )
+        print(" ", end="", flush=True)
         # launch optimization job inside scratch folder
         self.engine.M = copy.deepcopy(molecule)
         self.engine.extra_constraints = self.extra_constraints
@@ -654,20 +795,30 @@ class DihedralScanner:
             print("Find finished jobs:", finished_path_set)
         for job_path in finished_path_set:
             m_init, from_grid_id, to_grid_id = self.running_job_path_info.pop(job_path)
-            # call the engine to parse output file and return final geometry/energy in a new molecule
-            m = self.engine.load_task_result_m(job_path)
-            # save the parsed task result to disk
-            self.save_task_cache(job_path, m_init, m)
-            # we will check here if the optimized structure has the desired dihedral ids
-            grid_id = self.get_dihedral_id(m, check_grid_id=to_grid_id)
-            if grid_id is None:
-                print(f"Constrained optimization result at {job_path} is skipped, because final geometry is far from grid id {to_grid_id}")
+            logger.debug(f"{job_path} popped from queue: {m_init}, {from_grid_id}, {to_grid_id}")
+            # call the engine to parse output file and return a molecule object containig the final energy and geometry
+            m = self.engine.load_task_result_m(job_path, grid_id=to_grid_id)
+
+            # if m is None, it means no geometry has been generated
+            if m is not None:
+                # save the parsed task result to disk
+                self.save_task_cache(job_path, m_init, m)
+                # we will check here if the optimized structure has (at least) the desired dihedral ids
+                grid_id = self.get_dihedral_id(m, check_grid_id=to_grid_id)
             else:
-                # each finished job result is a tuple of (m, grid_id)
-                self.current_finished_job_results.push((m, grid_id), priority=job_path)
+                return
+
+            if grid_id is None:
+                print(
+                    f"Constrained optimization result at {job_path} is skipped, because final geometry is far from grid id {to_grid_id}"
+                )
+                return
+
+            # each finished job result is a tuple of (m, grid_id)
+            self.current_finished_job_results.push((m, grid_id), priority=job_path)
 
     def finish(self):
-        """ Write qdata.txt and scan.xyz file based on converged scan results """
+        """Write qdata.txt and scan.xyz file based on converged scan results"""
         m = Molecule()
         m.elem = list(self.engine.M.elem)
         m.qm_energies, m.xyzs, m.comms = [], [], []
@@ -683,75 +834,100 @@ class DihedralScanner:
             if writing_gradients:
                 m.qm_grads.append(self.grid_final_gradients[gid])
             m.comms.append("Dihedral %s Energy %.9f" % (str(gid), self.grid_energies[gid]))
-        m.write('qdata.txt')
+        m.write("qdata.txt")
         print(f"Final scan energies{' and gradients' if writing_gradients else ''} are written to qdata.txt")
-        m.write('scan.xyz')
+        m.write("scan.xyz")
         print("Final scan energies are written to scan.xyz")
 
-
-    #----------------------------------
+    # ----------------------------------
     # Status Drawing Utilites
-    #----------------------------------
+    # ----------------------------------
 
     def draw_ansi_image(self):
-        """ Return a string with ANSI colors showing current running status """
-        if not hasattr(self, 'grid_energies') or not hasattr(self, 'opt_queue'):
+        """Return a string with ANSI colors showing current running status"""
+        if not hasattr(self, "grid_energies") or not hasattr(self, "opt_queue"):
             return "draw_ansi_image failed: grid_energies or opt_queue not available"
         result_str = ""
         count = 0
         running_to_job_ids = set(to_grid_id for m, from_grid_id, to_grid_id in self.opt_queue)
+        logger.debug(f"self.grid_energies: {self.grid_energies}")
+
         for grid_id in self.grid_ids:
-            symbol = ' -'
+            symbol = " -"
             if grid_id in running_to_job_ids:
-                symbol = ' \033[0;33m+\033[0m' # orange for running jobs
+                symbol = " \033[0;33m+\033[0m"  # orange for running jobs
+            elif grid_id in self.grid_failed and grid_id not in self.grid_energies:  # see note 1.
+                symbol = " \033[0;31mx\033[0m"  # red for failed jobs
             elif grid_id in self.grid_energies:
-                symbol = ' \033[0;36mo\033[0m' # cyan for finished jobs
+                symbol = " \033[0;36mo\033[0m"  # cyan for finished jobs
             result_str += symbol
             count += 1
             end_number = 1
             for i_dim in range(self.grid_dim):
                 end_number *= len(self.grid_axes[i_dim])
                 if count % end_number == 0:
-                    result_str += '\n'
+                    result_str += "\n"
         return result_str
+        # Notes
+        # 1) this if clause avoids marking as x a job that previously had a successfully completed result
 
     def draw_ramachandran_plot(self):
-        """ Return a string of Ramachandran plot showing current running status """
+        """Return a string of Ramachandran plot showing current running status"""
         assert self.grid_dim == 2, "Ramachandran plot only works for 2-D scans"
         gsx, gsy = self.grid_spacing
         grid_x, grid_y = self.grid_axes
         # add labels of status for each grid point
         grid_status = collections.defaultdict(str)
-        gid_direction = {(gsx,0):'r', (gsx-360,0):'r', (-gsx,0):'l', (360-gsx,0):'l',
-                         (0,gsy):'u', (0,gsy-360):'u', (0,-gsy):'d', (0,360-gsy):'d', (0,0):'o'}
+        gid_direction = {
+            (gsx, 0): "r",
+            (gsx - 360, 0): "r",
+            (-gsx, 0): "l",
+            (360 - gsx, 0): "l",
+            (0, gsy): "u",
+            (0, gsy - 360): "u",
+            (0, -gsy): "d",
+            (0, 360 - gsy): "d",
+            (0, 0): "o",
+        }
         # print the status of jobs that are about to be launched
         for m, from_grid_id, to_grid_id in self.opt_queue:
             from_x, from_y = from_grid_id
             to_x, to_y = to_grid_id
-            direction = gid_direction[(to_x-from_x, to_y-from_y)]
+            direction = gid_direction[(to_x - from_x, to_y - from_y)]
             grid_status[to_grid_id] += direction
         # if no job launching for this grid point, print the previous result
         for grid_id in self.refined_grid_ids:
             if grid_id not in grid_status:
-                grid_status[grid_id] = 'f' # green tiles for just refined results
+                grid_status[grid_id] = "f"  # green tiles for just refined results
         for grid_id in self.grid_energies:
             if grid_id not in grid_status:
-                grid_status[grid_id] = 'e' # blue tiles for finished results
+                grid_status[grid_id] = "e"  # blue tiles for finished results
         # format string
-        status_symbols = collections.defaultdict(lambda: '\x1b[1;41m><\x1b[0m',
-                           {''  :'  '                  , 'c': '\x1b[46m--\x1b[0m',
-                            'e' :'\x1b[44m--\x1b[0m'   , 'f': '\x1b[42m--\x1b[0m',
-                            'r' :'\x1b[1;41m＞\x1b[0m' , 'l':'\x1b[1;41m＜\x1b[0m',
-                            'd' :'\x1b[1;41m\\/\x1b[0m', 'u':'\x1b[1;41m/\\\x1b[0m',
-                            'dl':'\x1b[41m＼\x1b[0m'   , 'dr':'\x1b[41m／\x1b[0m',
-                            'ld':'\x1b[41m＼\x1b[0m'   , 'rd':'\x1b[41m／\x1b[0m',
-                            'ul':'\x1b[41m／\x1b[0m'   , 'ur':'\x1b[41m＼\x1b[0m',
-                            'lu':'\x1b[41m／\x1b[0m'   , 'ru':'\x1b[41m＼\x1b[0m',
-                           })
-        result_str  = "--== Ramachandran Plot of Optimization Status ==--\n"
+        status_symbols = collections.defaultdict(
+            lambda: "\x1b[1;41m><\x1b[0m",
+            {
+                "": "  ",
+                "c": "\x1b[46m--\x1b[0m",
+                "e": "\x1b[44m--\x1b[0m",
+                "f": "\x1b[42m--\x1b[0m",
+                "r": "\x1b[1;41m＞\x1b[0m",
+                "l": "\x1b[1;41m＜\x1b[0m",
+                "d": "\x1b[1;41m\\/\x1b[0m",
+                "u": "\x1b[1;41m/\\\x1b[0m",
+                "dl": "\x1b[41m＼\x1b[0m",
+                "dr": "\x1b[41m／\x1b[0m",
+                "ld": "\x1b[41m＼\x1b[0m",
+                "rd": "\x1b[41m／\x1b[0m",
+                "ul": "\x1b[41m／\x1b[0m",
+                "ur": "\x1b[41m＼\x1b[0m",
+                "lu": "\x1b[41m／\x1b[0m",
+                "ru": "\x1b[41m＼\x1b[0m",
+            },
+        )
+        result_str = "--== Ramachandran Plot of Optimization Status ==--\n"
         result_str += "--== Blue: Optimized, Green: Found Lower, Red: Next ==--\n"
-        result_str += "  " + ''.join("%6d" % x for x in grid_x[::3]) + '\n'
+        result_str += "  " + "".join("%6d" % x for x in grid_x[::3]) + "\n"
         for y in grid_y[::-1]:
-            line = '%4d '%y + ''.join(status_symbols[grid_status[(x,y)]] for x in grid_x) + '\n'
+            line = "%4d " % y + "".join(status_symbols[grid_status[(x, y)]] for x in grid_x) + "\n"
             result_str += line
         return result_str

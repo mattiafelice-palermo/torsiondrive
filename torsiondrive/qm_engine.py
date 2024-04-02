@@ -8,6 +8,11 @@ import copy
 from geometric.molecule import Molecule
 from .extra_constraints import build_geometric_constraint_string, build_terachem_constraint_string
 
+import logging
+
+logger = logging.getLogger("yamlLogger")
+
+
 def check_all_float(iterable):
     try:
         [float(i) for i in iterable]
@@ -15,9 +20,10 @@ def check_all_float(iterable):
     except ValueError:
         return False
 
+
 class QMEngine(object):
     def __init__(self, input_file=None, work_queue=None, native_opt=False, extra_constraints=None):
-        self.temp_type = None # will be set to either "gradient" or "optimize" later
+        self.temp_type = None  # will be set to either "gradient" or "optimize" later
         self.work_queue = work_queue
         self.native_opt = native_opt
         self.extra_constraints = extra_constraints
@@ -44,7 +50,7 @@ class QMEngine(object):
         self.dihedral_idx_values = dihedral_idx_values
 
     def write_constraints_txt(self):
-        """ write a constraints.txt file for geomeTRIC """
+        """write a constraints.txt file for geomeTRIC"""
         if self.extra_constraints is None:
             constraints_string = "$set\n"
             for d1, d2, d3, d4, v in self.dihedral_idx_values:
@@ -52,17 +58,17 @@ class QMEngine(object):
                 constraints_string += f"dihedral {d1+1} {d2+1} {d3+1} {d4+1} {float(v)}\n"
         else:
             constraints_string = build_geometric_constraint_string(self.extra_constraints, self.dihedral_idx_values)
-        with open('constraints.txt', 'w') as outfile:
+        with open("constraints.txt", "w") as outfile:
             outfile.write(constraints_string)
 
     def load_geomeTRIC_output(self):
-        """ Load the optimized geometry and energy into a new molecule object and return """
+        """Load the optimized geometry and energy into a new molecule object and return"""
         # the name of the file is consistent with the --prefix tdrive option,
         # this also requires the input file NOT be named to sth like tdrive.in
         # otherwise the output will become tdrive_optim.xyz
-        if not os.path.isfile('qdata.txt'):
+        if not os.path.isfile("qdata.txt"):
             raise OSError("geomeTRIC output qdata.txt file not found")
-        m = Molecule('qdata.txt')[-1]
+        m = Molecule("qdata.txt")[-1]
         # copy the m.elem since qdata.txt does not have it
         m.elem = self.M.elem
         # check the data loaded
@@ -72,7 +78,7 @@ class QMEngine(object):
         return m
 
     def launch_optimize(self, job_path=None):
-        """ launch an optimization job inside job_path """
+        """launch an optimization job inside job_path"""
         orig_dir = os.getcwd()
         if job_path is not None:
             os.chdir(job_path)
@@ -82,7 +88,7 @@ class QMEngine(object):
             self.optimize_geomeTRIC()
         os.chdir(orig_dir)
 
-    def load_task_result_m(self, job_path=None):
+    def load_task_result_m(self, job_path=None, grid_id=None):
         """
         Load the result of optimization into a Molecule object, from job_path
         Return the Molecule object
@@ -91,14 +97,14 @@ class QMEngine(object):
         if job_path is not None:
             os.chdir(job_path)
         if self.native_opt:
-            m = self.load_native_output()
+            m = self.load_native_output(grid_id=grid_id)
         else:
             m = self.load_geomeTRIC_output()
         os.chdir(orig_dir)
         return m
 
     def run(self, cmd, input_files=None, output_files=None):
-        """ Execute a command locally or remotely, based on whether self.work_queue is set """
+        """Execute a command locally or remotely, based on whether self.work_queue is set"""
         if input_files is None:
             input_files = []
         if output_files is None:
@@ -112,7 +118,7 @@ class QMEngine(object):
             self.work_queue.submit(cmd, input_files, output_files)
 
     def find_finished_jobs(self, running_job_path_id, wait_time=10):
-        """ Find finished jobs in job_path_set, return a set of job paths """
+        """Find finished jobs in job_path_set, return a set of job paths"""
         assert wait_time > 0
         finished_path_set = set()
         if self.work_queue is None:
@@ -140,8 +146,10 @@ class QMEngine(object):
     def load_native_output(self):
         raise NotImplementedError
 
+
 class EngineBlank(QMEngine):
-    """ A blank engine only used in testing """
+    """A blank engine only used in testing"""
+
     def optimize_native(self):
         return
 
@@ -150,18 +158,23 @@ class EngineBlank(QMEngine):
 
     def load_native_output(self):
         return Molecule()
+
+
 class EngineASE(QMEngine):
     def __init__(self, input_file=None, work_queue=None, native_opt=False, extra_constraints=None, exe=None):
         super().__init__(input_file, work_queue, native_opt, extra_constraints)
+
     def load_input(self, input_file):
         self.m_xyz = Molecule(input_file)
         self.M = copy.deepcopy(self.m_xyz)
+
     def write_input(self):
-        """ Write a new xyz file with the lastest geometry"""
+        """Write a new xyz file with the lastest geometry"""
         self.m_xyz.xyzs[0] = self.M.xyzs[0]
-        self.m_xyz.write('input.xyz')
+        self.m_xyz.write("input.xyz")
+
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
@@ -171,8 +184,13 @@ class EngineASE(QMEngine):
         # step 2
         self.write_input()
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine ase input.xyz constraints.txt'
-        self.run(cmd, input_files =['input.xyz', 'constraints.txt'], output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        cmd = "geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine ase input.xyz constraints.txt"
+        self.run(
+            cmd,
+            input_files=["input.xyz", "constraints.txt"],
+            output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"],
+        )
+
 
 class EngineOpenMM(QMEngine):
     def load_input(self, input_file):
@@ -181,9 +199,11 @@ class EngineOpenMM(QMEngine):
         self.m_pdb = Molecule(input_file)[0]
         self.M = copy.deepcopy(self.m_pdb)
 
-        xml_name = os.path.splitext(input_file)[0] + '.xml'
+        xml_name = os.path.splitext(input_file)[0] + ".xml"
         # Check the xml file is present
-        assert os.path.exists(xml_name) is True, "OpenMM requires a pdb and xml file, ensure you have both in the current folder with the same prefix"
+        assert (
+            os.path.exists(xml_name) is True
+        ), "OpenMM requires a pdb and xml file, ensure you have both in the current folder with the same prefix"
         with open(xml_name) as f:
             self.xml_content = f.read()
 
@@ -191,12 +211,12 @@ class EngineOpenMM(QMEngine):
         """Write a pdb file with the latest geometry and the input xml file"""
 
         self.m_pdb.xyzs[0] = self.M.xyzs[0]
-        self.m_pdb.write('input.pdb')
-        with open('input.xml', 'w') as out:
-                out.write(self.xml_content)
+        self.m_pdb.write("input.pdb")
+        with open("input.xml", "w") as out:
+            out.write(self.xml_content)
 
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
@@ -206,15 +226,17 @@ class EngineOpenMM(QMEngine):
         # step 2
         self.write_input()
         # set3
-        self.run('geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --pdb '
-                 'input.pdb --openmm input.xml constraints.txt',
-                 input_files=['input.xml', 'input.pdb', 'constraints.txt'],
-                 output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        self.run(
+            "geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --pdb "
+            "input.pdb --openmm input.xml constraints.txt",
+            input_files=["input.xml", "input.pdb", "constraints.txt"],
+            output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"],
+        )
 
 
 class EnginePsi4(QMEngine):
     def load_input(self, input_file):
-        """ Load a Psi4 input file as a Molecule object into self.M
+        """Load a Psi4 input file as a Molecule object into self.M
         Only xyz input coordinates are supported for now.
         Exmaple input file:
 
@@ -242,7 +264,7 @@ class EnginePsi4(QMEngine):
         coords = []
         elems = []
         reading_molecule, found_geo = False, False
-        psi4_temp = [] # store a template of the input file for generating new ones
+        psi4_temp = []  # store a template of the input file for generating new ones
         with open(input_file) as psi4in:
             for line in psi4in:
                 line_sl = line.strip().lower()
@@ -260,20 +282,20 @@ class EnginePsi4(QMEngine):
                         coords.append(ls[1:4])
                     else:
                         psi4_temp.append(line)
-                        if '}' in line:
+                        if "}" in line:
                             reading_molecule = False
                             psi4_temp.append("$!optking@here")
                 else:
                     psi4_temp.append(line)
-                if  line_sl.startswith('gradient('):
+                if line_sl.startswith("gradient("):
                     self.temp_type = "gradient"
-                elif line_sl.startswith('optimize('):
+                elif line_sl.startswith("optimize("):
                     self.temp_type = "optimize"
         assert found_geo, "XYZ geometry not found in molecule block of %s" % input_file
         if self.native_opt:
-            assert self.temp_type == 'optimize', "input_file should contain optimize() command to use native opt"
+            assert self.temp_type == "optimize", "input_file should contain optimize() command to use native opt"
         else:
-            assert self.temp_type == 'gradient', "input_file should contain gradient() command to use geomeTRIC"
+            assert self.temp_type == "gradient", "input_file should contain gradient() command to use geomeTRIC"
         # self.psi4_temp will enable writing input files with new geometries
         self.psi4_temp = psi4_temp
         # here self.M can be and will be overwritten by external functions
@@ -282,86 +304,117 @@ class EnginePsi4(QMEngine):
         self.M.xyzs = [np.array(coords, dtype=float)]
         self.M.build_topology()
 
-    def write_input(self, filename='input.dat'):
-        """ Write output based on self.psi4_temp and self.M, using only geometry of the first frame """
-        assert hasattr(self, 'psi4_temp'), "psi4_temp not found, call self.load_input() first"
-        with open(filename, 'w') as outfile:
+    def write_input(self, filename="input.dat"):
+        """Write output based on self.psi4_temp and self.M, using only geometry of the first frame"""
+        assert hasattr(self, "psi4_temp"), "psi4_temp not found, call self.load_input() first"
+        with open(filename, "w") as outfile:
             for line in self.psi4_temp:
-                if line == '$!geometry@here':
+                if line == "$!geometry@here":
                     for e, c in zip(self.M.elem, self.M.xyzs[0]):
                         outfile.write("%-7s %13.7f %13.7f %13.7f\n" % (e, c[0], c[1], c[2]))
-                elif line == '$!optking@here':
-                    if hasattr(self, 'optkingStr'):
+                elif line == "$!optking@here":
+                    if hasattr(self, "optkingStr"):
                         outfile.write(self.optkingStr)
                 else:
                     outfile.write(line)
 
     def optimize_native(self):
-        """ run the constrained optimization using native Optking, in 2 steps:
+        """run the constrained optimization using native Optking, in 2 steps:
         1. write a optimization job input file.
         2. run the job
         """
-        assert self.temp_type == 'optimize', "To use native optimization, the input file should have optimize() in it"
+        assert self.temp_type == "optimize", "To use native optimization, the input file should have optimize() in it"
         if self.extra_constraints is not None:
-            raise RuntimeError('extra constraints not supported in Psi4 native optimizations')
+            raise RuntimeError("extra constraints not supported in Psi4 native optimizations")
         # add the optking command
         self.optkingStr = '\nset optking {\n  ranged_dihedral = ("\n'
         for d1, d2, d3, d4, v in self.dihedral_idx_values:
             # Optking use atom index starting from 1
-            self.optkingStr += '        %d  %d  %d  %d  %f\n %f\n' % (d1+1, d2+1, d3+1, d4+1, v, v)
+            self.optkingStr += "        %d  %d  %d  %d  %f\n %f\n" % (d1 + 1, d2 + 1, d3 + 1, d4 + 1, v, v)
         self.optkingStr += '  ")\n}\n'
         # write input file
-        print(os.getcwd())
-        self.write_input('input.dat')
+        self.write_input("input.dat")
         # run the job
-        self.run('psi4 input.dat -o output.dat', input_files=['input.dat'], output_files=['output.dat'])
+        self.run("psi4 input.dat -o output.dat", input_files=["input.dat"], output_files=["output.dat"])
 
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
         """
-        assert self.temp_type == 'gradient', "To use geomeTRIC package, the input file should have gradient() in it"
+        assert self.temp_type == "gradient", "To use geomeTRIC package, the input file should have gradient() in it"
         # step 1
         self.write_constraints_txt()
         # step 2
-        self.write_input('input.dat')
+        self.write_input("input.dat")
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine psi4 input.dat constraints.txt'
-        self.run(cmd, input_files=['input.dat', 'constraints.txt'], output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        cmd = "geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine psi4 input.dat constraints.txt"
+        self.run(
+            cmd,
+            input_files=["input.dat", "constraints.txt"],
+            output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"],
+        )
 
-
-    def load_native_output(self, filename='output.dat'):
-        """ Load the optimized geometry and energy into a new molecule object and return """
+    def load_native_output(self, filename="output.dat", grid_id=None):
+        """Load the optimized geometry and energy into a new molecule object and return"""
+        has_converged = False
         found_opt_result = False
-        final_energy, elems, coords = None, [], []
+        last_energy, elems, coords = None, [], []
         with open(filename) as outfile:
             for line in outfile:
                 line = line.strip()
-                if line.startswith('Total Energy              ='):
-                    final_energy = float(line.split()[-2])
-                elif line.startswith('Final optimized geometry and variables'):
+                if line.startswith("Final optimized geometry and variables:"):
+                    has_converged = True
+
+                if line.startswith("Total Energy ="):
+                    last_energy = float(line.split()[-1])
+
+                # We are going to read the geometries for all optimizations steps
+                # If the geometry converges, the last one is the final one
+                # If the geometry does not converge, we keep the last one to try generate
+                # new geometries for the adjacent grid_ids
+                elif line.startswith("Geometry (in Angstrom)"):
                     found_opt_result = True
+                    elems, coords = [], []
+                    emptylines = 0
                 elif found_opt_result:
+                    emptylines += 1 if line == "" else 0
+
+                    if emptylines == 2:
+                        found_opt_result = False
+                        continue
+
                     ls = line.split()
                     if len(ls) == 4 and check_all_float(ls[1:]):
                         elems.append(ls[0])
                         coords.append(ls[1:4])
-        if final_energy is None:
-            raise RuntimeError("Final energy not found in %s" % filename)
+
+        if not has_converged:
+            logger.warning("Optimization not converged")
+
+        # TODO: I don't know if this needs to be here or if the logic is faulty
+        if last_energy is None:
+            logger.warning("Final energy not found in %s" % filename)
+
         if len(elems) == 0 or len(coords) == 0:
-            raise RuntimeError("Final geometry not found in %s" % filename)
+            logger.warning("Final geometry not found in %s" % filename)
+            return None
+
+        # overwrite self.M
         m = Molecule()
         m.elem = elems
         m.xyzs = [np.array(coords, dtype=float)]
-        m.qm_energies = [final_energy]
+        m.qm_energies = [last_energy]
+        if not has_converged:
+            m.qm_energies = [None]  # we're not interested in the energy of a non converged optimization
         m.build_topology()
         return m
 
+
 class EnginexTB(QMEngine):
     def load_input(self, input_file):
-        """ Load a xTB input file as a Molecule object into self.M
+        """Load a xTB input file as a Molecule object into self.M
         Only .xyz file format is supported for now.
         The comment line is used as the input argument for xTB
         Exmaple input file:
@@ -375,7 +428,7 @@ class EnginexTB(QMEngine):
         """
         coords = []
         elems = []
-        with open(input_file, 'r') as xTBin:
+        with open(input_file, "r") as xTBin:
             n_atoms = int(xTBin.readline())
             comment = xTBin.readline().strip()
             for line in range(n_atoms):
@@ -383,20 +436,21 @@ class EnginexTB(QMEngine):
                 elems.append(elem)
                 coords.append((x, y, z))
 
-        if comment.startswith('xTB arguments:'):
-            cmd = comment[len('xTB arguments:'):]
+        if comment.startswith("xTB arguments:"):
+            cmd = comment[len("xTB arguments:") :]
         else:
-            cmd = '--opt'
+            cmd = "--opt"
             print("'xTB arguments:' not found in the command line, no extra arguments passed to xTB.")
 
         if self.native_opt:
             self.temp_type = "optimize"
-            warnings.warn('Note that xTB uses an energy restraint to restrain the '
-                          'dihedral, which might give different results compared with a '
-                          'torsion constrain used in geomeTRIC.')
-            if not '--opt' in cmd:
+            warnings.warn(
+                "Note that xTB uses an energy restraint to restrain the "
+                "dihedral, which might give different results compared with a "
+                "torsion constrain used in geomeTRIC."
+            )
+            if not "--opt" in cmd:
                 raise ValueError("comment line should contain --opt command to use native opt")
-
 
         self.xTB_args = cmd
         # here self.M can be and will be overwritten by external functions
@@ -405,38 +459,43 @@ class EnginexTB(QMEngine):
         self.M.xyzs = [np.array(coords, dtype=float)]
         self.M.build_topology()
 
-    def write_input(self, filename='coords'):
-        """ Write output based on self.M, using only geometry of the first frame """
+    def write_input(self, filename="coords"):
+        """Write output based on self.M, using only geometry of the first frame"""
         # Write the coordinate file
-        with open(filename + '.xyz', 'w') as outfile:
-            outfile.write('{}\n\n'.format(len(self.M.elem)))
+        with open(filename + ".xyz", "w") as outfile:
+            outfile.write("{}\n\n".format(len(self.M.elem)))
             for e, c in zip(self.M.elem, self.M.xyzs[0]):
                 outfile.write("{:<7} {:<13.7f} {:<13.7f} {:<13.7f}\n".format(e, c[0], c[1], c[2]))
-        with open(filename + '.inp', 'w') as outfile:
+        with open(filename + ".inp", "w") as outfile:
             outfile.write(self.opt_restrain)
 
     def optimize_native(self):
-        """ run the constrained optimization using native opt, in 2 steps:
+        """run the constrained optimization using native opt, in 2 steps:
         1. write a optimization job input file.
         2. run the job
         """
         if self.extra_constraints is not None:
-            raise RuntimeError('Extra constraints not supported in TorsionDrive xTB native optimizations yet.')
+            raise RuntimeError("Extra constraints not supported in TorsionDrive xTB native optimizations yet.")
         # add the optking command
-        self.opt_restrain = '$constrain\n'
-        self.opt_restrain += 'force constant=15.0\n' # Unit Hatree/rad^2 to obtain a STD of 0.5 degree
+        self.opt_restrain = "$constrain\n"
+        self.opt_restrain += "force constant=15.0\n"  # Unit Hatree/rad^2 to obtain a STD of 0.5 degree
         for d1, d2, d3, d4, v in self.dihedral_idx_values:
             # xTB use atom index starting from 1
-            self.opt_restrain += 'dihedral: {D1}, {D2}, {D3}, {D4}, {v}\n'.format(D1=d1+1, D2=d2+1, D3=d3+1, D4=d4+1, v=v)
-        self.opt_restrain += '$end\n'
+            self.opt_restrain += "dihedral: {D1}, {D2}, {D3}, {D4}, {v}\n".format(
+                D1=d1 + 1, D2=d2 + 1, D3=d3 + 1, D4=d4 + 1, v=v
+            )
+        self.opt_restrain += "$end\n"
         # write input file
-        self.write_input('input')
+        self.write_input("input")
         # run the job
-        self.run('xtb input.xyz {cmd} --input input.inp'.format(cmd=self.xTB_args),
-                 input_files=['input.inp', 'input.xyz'], output_files=['xtbopt.xyz'])
+        self.run(
+            "xtb input.xyz {cmd} --input input.inp".format(cmd=self.xTB_args),
+            input_files=["input.inp", "input.xyz"],
+            output_files=["xtbopt.xyz"],
+        )
 
-    def load_native_output(self, filename='xtbopt.xyz'):
-        """ Load the optimized geometry and energy into a new molecule object and return """
+    def load_native_output(self, filename="xtbopt.xyz"):
+        """Load the optimized geometry and energy into a new molecule object and return"""
         final_energy, elems, coords = None, [], []
         with open(filename) as outfile:
             n_atoms = int(outfile.readline())
@@ -453,9 +512,11 @@ class EnginexTB(QMEngine):
             except ValueError:
                 pass
         else:
-            raise ValueError('Can not find the Final Energy from the line {}. '
-                             'Check the output to make sure the optimisation '
-                             'successfully terminates.'.format(comment))
+            raise ValueError(
+                "Can not find the Final Energy from the line {}. "
+                "Check the output to make sure the optimisation "
+                "successfully terminates.".format(comment)
+            )
         final_energy = float(final_energy)
 
         m = Molecule()
@@ -513,7 +574,7 @@ class EngineGaussian(QMEngine):
                     coords.append(ls[1:4])
 
                 elif reading_molecule:
-                    if line.strip() == '':
+                    if line.strip() == "":
                         reading_molecule = False
                         gauss_temp.append(line)
                         gauss_temp.append("$!optblock@here")
@@ -525,14 +586,16 @@ class EngineGaussian(QMEngine):
                 else:
                     gauss_temp.append(line)
 
-                if 'opt=modredundant' in line.lower():
-                    self.temp_type = 'optimize'
+                if "opt=modredundant" in line.lower():
+                    self.temp_type = "optimize"
                 elif "force=nostep" in line.lower():
                     self.temp_type = "gradient"
                 previous_line = line
         assert found_geo, "XYZ geometry not found in molecule block of %s" % input_file
         if self.native_opt:
-            assert self.temp_type == 'optimize', "input_file should be a opt job to use native opt include the Opt=ModRedundant flag"
+            assert (
+                self.temp_type == "optimize"
+            ), "input_file should be a opt job to use native opt include the Opt=ModRedundant flag"
         # make sure the checkpoint file name is included
         if not any("%chk" in command.lower() for command in gauss_temp):
             gauss_temp.insert(0, "%Chk=ligand\n")
@@ -546,32 +609,35 @@ class EngineGaussian(QMEngine):
         self.M.build_topology()
 
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
         """
-        assert self.temp_type == 'gradient', "To use geomeTRIC package, the input file should have Force=NoStep in it"
+        assert self.temp_type == "gradient", "To use geomeTRIC package, the input file should have Force=NoStep in it"
         # step 1
         self.write_constraints_txt()
         # step 2
-        self.write_input('input.com')
+        self.write_input("input.com")
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine gaussian input.com constraints.txt'
-        self.run(cmd, input_files=['input.com', 'constraints.txt'],
-                 output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        cmd = "geometric-optimize --prefix tdrive --qccnv yes --reset yes --epsilon 0.0 --enforce 0.1 --qdata yes --engine gaussian input.com constraints.txt"
+        self.run(
+            cmd,
+            input_files=["input.com", "constraints.txt"],
+            output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"],
+        )
 
-    def write_input(self, filename='gaussian.com'):
-        """ Write Gaussian input using Molecule Class """
-        assert hasattr(self, 'gauss_temp'), "self.gauss_temp not set, call load_input() first"
-        with open(filename, 'w') as outfile:
+    def write_input(self, filename="gaussian.com"):
+        """Write Gaussian input using Molecule Class"""
+        assert hasattr(self, "gauss_temp"), "self.gauss_temp not set, call load_input() first"
+        with open(filename, "w") as outfile:
             for line in self.gauss_temp:
-                if line == '$!geometry@here':
+                if line == "$!geometry@here":
                     for e, c in zip(self.M.elem, self.M.xyzs[0]):
                         outfile.write("%-7s %13.7f %13.7f %13.7f\n" % (e, c[0], c[1], c[2]))
 
                 elif line == "$!optblock@here":
-                    if hasattr(self, 'optblockStr'):
+                    if hasattr(self, "optblockStr"):
                         # self.optblockStr will be set by self.optimize_native()
                         outfile.write(self.optblockStr)
 
@@ -584,23 +650,26 @@ class EngineGaussian(QMEngine):
         1. write a optimization job input file.
         2. run the job
         """
-        assert self.temp_type == 'optimize', "To use native optimization, the input file must be an opt job"
-        assert hasattr(self, 'gaussian_exe'), 'The version of gaussian could not be determined!'
+        assert self.temp_type == "optimize", "To use native optimization, the input file must be an opt job"
+        assert hasattr(self, "gaussian_exe"), "The version of gaussian could not be determined!"
         if self.extra_constraints is not None:
-            raise RuntimeError('extra constraints not supported in Gaussian native optimizations')
-        self.optblockStr =''
+            raise RuntimeError("extra constraints not supported in Gaussian native optimizations")
+        self.optblockStr = ""
         for d1, d2, d3, d4, v in self.dihedral_idx_values:
-            self.optblockStr += f'{d1 + 1} {d2 + 1} {d3 + 1} {d4 + 1} ={v:.3f} B\n'  # Build the angle
-            self.optblockStr += f'{d1 + 1} {d2 + 1} {d3 + 1} {d4 + 1} F\n'           # Freeze the angle
-        self.optblockStr += f'\n' # Add the tailing line.
+            self.optblockStr += f"{d1 + 1} {d2 + 1} {d3 + 1} {d4 + 1} ={v:.3f} B\n"  # Build the angle
+            self.optblockStr += f"{d1 + 1} {d2 + 1} {d3 + 1} {d4 + 1} F\n"  # Freeze the angle
+        self.optblockStr += f"\n"  # Add the tailing line.
         # write input file
-        self.write_input('gaussian.com')
+        self.write_input("gaussian.com")
         # run the job
-        self.run(f'{self.gaussian_exe} < gaussian.com > gaussian.log && formchk ligand.chk ligand.fchk', input_files=['gaussian.com'],
-                 output_files=['gaussian.log', 'ligand.fchk'])
+        self.run(
+            f"{self.gaussian_exe} < gaussian.com > gaussian.log && formchk ligand.chk ligand.fchk",
+            input_files=["gaussian.com"],
+            output_files=["gaussian.log", "ligand.fchk"],
+        )
 
-    def load_native_output(self, filename='ligand.fchk', filename2='gaussian.log'):
-        """ Load the optimized geometry and energy into a new molecule object and return """
+    def load_native_output(self, filename="ligand.fchk", filename2="gaussian.log"):
+        """Load the optimized geometry and energy into a new molecule object and return"""
         # Check the log file to see if the optimization was successful
         opt_result = False
         final_energy, elems, coords = None, [], []
@@ -609,7 +678,7 @@ class EngineGaussian(QMEngine):
                 # Accept both
                 # Optimization completed.
                 # Optimization completed on the basis of negligible forces.
-                if 'Optimization completed' in line:
+                if "Optimization completed" in line:
                     opt_result = True
                     break
 
@@ -620,16 +689,16 @@ class EngineGaussian(QMEngine):
         end_xyz_pos = None
         with open(filename) as outfile:
             for i, line in enumerate(outfile):
-                if 'Current cartesian coordinates' in line:
+                if "Current cartesian coordinates" in line:
                     num_xyz = int(line.split()[5])
-                    end_xyz_pos = int(np.ceil(num_xyz/5)+i+1)
+                    end_xyz_pos = int(np.ceil(num_xyz / 5) + i + 1)
                 elif end_xyz_pos is not None and i < end_xyz_pos:
-                    coords.extend([float(num) * 0.529177 for num in line.strip('\n').split()])
-                elif 'Total Energy' in line:
+                    coords.extend([float(num) * 0.529177 for num in line.strip("\n").split()])
+                elif "Total Energy" in line:
                     final_energy = float(line.split()[3])
 
         if end_xyz_pos is None:
-            raise RuntimeError('Cannot locate coordinates in ligand.fchk file.')
+            raise RuntimeError("Cannot locate coordinates in ligand.fchk file.")
 
         # Make sure we have all of the coordinates
         assert len(coords) == num_xyz, "Could not extract the optimised geometry"
@@ -666,9 +735,9 @@ class EngineQChem(QMEngine):
         geom_opt_max_cycles  150
         $end
         """
-        elems,coords = [], []
+        elems, coords = [], []
         reading_molecule, found_geo = False, False
-        qchem_temp = [] # store a template of the input file for generating new ones
+        qchem_temp = []  # store a template of the input file for generating new ones
         with open(input_file) as qchemin:
             for line in qchemin:
                 line_sl = line.strip().lower()
@@ -685,21 +754,21 @@ class EngineQChem(QMEngine):
                         coords.append(ls[1:])
                     else:
                         qchem_temp.append(line)
-                    if line_sl.startswith('$end'):
+                    if line_sl.startswith("$end"):
                         reading_molecule = False
                         qchem_temp.append("$!optblock@here")
                 else:
                     qchem_temp.append(line)
-                if line_sl.startswith('jobtype'):
+                if line_sl.startswith("jobtype"):
                     jobtype = line_sl.split()[1]
-                    if jobtype.startswith('opt'):
-                        self.temp_type = 'optimize'
-                    elif jobtype.startswith('force'):
-                        self.temp_type = 'gradient'
+                    if jobtype.startswith("opt"):
+                        self.temp_type = "optimize"
+                    elif jobtype.startswith("force"):
+                        self.temp_type = "gradient"
         if self.native_opt:
-            assert self.temp_type == 'optimize', "input_file should be a opt job to use native opt"
+            assert self.temp_type == "optimize", "input_file should be a opt job to use native opt"
         else:
-            assert self.temp_type == 'gradient', "input_file should be a gradient job to use geomeTRIC"
+            assert self.temp_type == "gradient", "input_file should be a gradient job to use geomeTRIC"
         # self.qchem_temp will enable writing input files with new geometries
         self.qchem_temp = qchem_temp
         # here self.M can be and will be overwritten by external functions
@@ -708,16 +777,16 @@ class EngineQChem(QMEngine):
         self.M.xyzs = [np.array(coords, dtype=float)]
         self.M.build_topology()
 
-    def write_input(self, filename='qc.in'):
-        """ Write QChem input using Molecule Class """
-        assert hasattr(self, 'qchem_temp'), "self.qchem_temp not set, call load_input() first"
-        with open(filename, 'w') as outfile:
+    def write_input(self, filename="qc.in"):
+        """Write QChem input using Molecule Class"""
+        assert hasattr(self, "qchem_temp"), "self.qchem_temp not set, call load_input() first"
+        with open(filename, "w") as outfile:
             for line in self.qchem_temp:
-                if line == '$!geometry@here':
+                if line == "$!geometry@here":
                     for e, c in zip(self.M.elem, self.M.xyzs[0]):
                         outfile.write("%-7s %13.7f %13.7f %13.7f\n" % (e, c[0], c[1], c[2]))
                 elif line == "$!optblock@here":
-                    if hasattr(self, 'optblockStr'):
+                    if hasattr(self, "optblockStr"):
                         # self.optblockStr will be set by self.optimize_native()
                         outfile.write(self.optblockStr)
                 else:
@@ -729,37 +798,39 @@ class EngineQChem(QMEngine):
         1. write a optimization job input file.
         2. run the job
         """
-        assert self.temp_type == 'optimize', "To use native optimization, the input file be an opt job"
+        assert self.temp_type == "optimize", "To use native optimization, the input file be an opt job"
         if self.extra_constraints is not None:
-            raise RuntimeError('extra constraints not supported in Q-Chem native optimizations')
+            raise RuntimeError("extra constraints not supported in Q-Chem native optimizations")
         # add the $opt block
-        self.optblockStr = '\n$opt\nCONSTRAINT\n'
+        self.optblockStr = "\n$opt\nCONSTRAINT\n"
         for d1, d2, d3, d4, v in self.dihedral_idx_values:
             # Optking use atom index starting from 1
-            self.optblockStr += 'tors  %d  %d  %d  %d  %f\n' % (d1+1, d2+1, d3+1, d4+1, v)
-        self.optblockStr += 'ENDCONSTRAINT\n$end\n'
+            self.optblockStr += "tors  %d  %d  %d  %d  %f\n" % (d1 + 1, d2 + 1, d3 + 1, d4 + 1, v)
+        self.optblockStr += "ENDCONSTRAINT\n$end\n"
         # write input file
-        self.write_input('qc.in')
+        self.write_input("qc.in")
         # run the job
-        self.run('qchem qc.in qc.out > qc.log', input_files=['qc.in'], output_files=['qc.out', 'qc.log'])
+        self.run("qchem qc.in qc.out > qc.log", input_files=["qc.in"], output_files=["qc.out", "qc.log"])
 
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
         """
-        assert self.temp_type == 'gradient', "To use geomeTRIC package, the input file should have gradient() in it"
+        assert self.temp_type == "gradient", "To use geomeTRIC package, the input file should have gradient() in it"
         # step 1
         self.write_constraints_txt()
         # step 2
-        self.write_input('qc.in')
+        self.write_input("qc.in")
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --qchem qc.in constraints.txt'
-        self.run(cmd, input_files=['qc.in', 'constraints.txt'], output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        cmd = "geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata --qchem qc.in constraints.txt"
+        self.run(
+            cmd, input_files=["qc.in", "constraints.txt"], output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"]
+        )
 
-    def load_native_output(self, filename='qc.out'):
-        """ Load the optimized geometry and energy into a new molecule object and return """
+    def load_native_output(self, filename="qc.out"):
+        """Load the optimized geometry and energy into a new molecule object and return"""
         m = Molecule(filename, ftype="qcout")[-1]
         return m
 
@@ -787,36 +858,37 @@ class EngineTerachem(QMEngine):
                 # we don't need to change the temp
                 self.tera_temp.append(line)
                 linest = line.strip()
-                if not linest: continue
+                if not linest:
+                    continue
                 key, value = linest.lower().split(None, 1)
-                if key == 'coordinates':
+                if key == "coordinates":
                     geo_file = value
-                elif key == 'run':
-                    if value == 'gradient':
-                        self.temp_type = 'gradient'
-                    elif value == 'minimize':
-                        self.temp_type = 'optimize'
+                elif key == "run":
+                    if value == "gradient":
+                        self.temp_type = "gradient"
+                    elif value == "minimize":
+                        self.temp_type = "optimize"
         # place holder for writing native constraints
-        self.tera_temp.append('$!constraints@here')
+        self.tera_temp.append("$!constraints@here")
         # check input
-        assert geo_file, 'coordinates key not found in input file %s' % input_file
+        assert geo_file, "coordinates key not found in input file %s" % input_file
         if self.native_opt:
-            assert self.temp_type == 'optimize', "input_file should be a opt job to use native opt"
+            assert self.temp_type == "optimize", "input_file should be a opt job to use native opt"
         else:
-            assert self.temp_type == 'gradient', "input_file should be a gradient job to use geomeTRIC"
+            assert self.temp_type == "gradient", "input_file should be a gradient job to use geomeTRIC"
         # load molecule from separate file, one frame only
         self.M = Molecule(geo_file)[0]
         # store the name of geo_file
         self.tera_geo_file = geo_file
 
     def write_input(self):
-        """ Write TeraChem input files, i.e. run.in and start.xyz """
-        assert hasattr(self, 'tera_temp'), "self.tera_temp not set, call load_input() first"
-        assert hasattr(self, 'tera_geo_file'), "self.tera_temp not set, call load_input() first"
-        with open('run.in', 'w') as terain:
+        """Write TeraChem input files, i.e. run.in and start.xyz"""
+        assert hasattr(self, "tera_temp"), "self.tera_temp not set, call load_input() first"
+        assert hasattr(self, "tera_geo_file"), "self.tera_temp not set, call load_input() first"
+        with open("run.in", "w") as terain:
             for line in self.tera_temp:
                 if line == "$!constraints@here":
-                    if hasattr(self, 'constraintsStr'):
+                    if hasattr(self, "constraintsStr"):
                         # self.constraintsStr will be set by self.optimize_native()
                         terain.write(self.constraintsStr)
                 else:
@@ -829,38 +901,44 @@ class EngineTerachem(QMEngine):
         1. write a optimization job input file.
         2. run the job
         """
-        assert self.temp_type == 'optimize', "To use native optimization, the input file be an opt job"
+        assert self.temp_type == "optimize", "To use native optimization, the input file be an opt job"
         if self.extra_constraints is None:
-            self.constraintsStr = '\n$constraint_set\n'
+            self.constraintsStr = "\n$constraint_set\n"
             for d1, d2, d3, d4, v in self.dihedral_idx_values:
                 # TeraChem use atom index starting from 1
                 self.constraintsStr += f"dihedral {float(v)} {d1+1}_{d2+1}_{d3+1}_{d4+1}\n"
-            self.constraintsStr += '$end\n'
+            self.constraintsStr += "$end\n"
         else:
             self.constraintsStr = build_terachem_constraint_string(self.extra_constraints, self.dihedral_idx_values)
         # write input file
         self.write_input()
         # run the job
-        self.run('terachem run.in > run.out', input_files=['run.in', self.tera_geo_file], output_files=['run.out', 'scr'])
+        self.run(
+            "terachem run.in > run.out", input_files=["run.in", self.tera_geo_file], output_files=["run.out", "scr"]
+        )
 
     def optimize_geomeTRIC(self):
-        """ run the constrained optimization using geomeTRIC package, in 3 steps:
+        """run the constrained optimization using geomeTRIC package, in 3 steps:
         1. Write a constraints.txt file.
         2. Write a gradient job input file.
         3. Run the job
         """
-        assert self.temp_type == 'gradient', "To use geomeTRIC package, the input file should have gradient() in it"
+        assert self.temp_type == "gradient", "To use geomeTRIC package, the input file should have gradient() in it"
         # step 1
         self.write_constraints_txt()
         # step 2
         self.write_input()
         # step 3
-        cmd = 'geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata run.in constraints.txt'
-        self.run(cmd, input_files=['run.in', self.tera_geo_file, 'constraints.txt'], output_files=['tdrive.log', 'tdrive_optim.xyz', 'qdata.txt'])
+        cmd = "geometric-optimize --prefix tdrive --qccnv --reset --epsilon 0.0 --enforce 0.1 --qdata run.in constraints.txt"
+        self.run(
+            cmd,
+            input_files=["run.in", self.tera_geo_file, "constraints.txt"],
+            output_files=["tdrive.log", "tdrive_optim.xyz", "qdata.txt"],
+        )
 
     def load_native_output(self):
-        """ Load the optimized geometry and energy into a new molecule object and return """
-        m = Molecule('scr/optim.xyz')[-1]
+        """Load the optimized geometry and energy into a new molecule object and return"""
+        m = Molecule("scr/optim.xyz")[-1]
         # read the energy from optim.xyz comment line
         m.qm_energies = [float(m.comms[0].split(maxsplit=1)[0])]
         return m
