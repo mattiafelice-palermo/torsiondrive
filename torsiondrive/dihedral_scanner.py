@@ -217,6 +217,9 @@ class DihedralScanner:
         # Jobs that failed to be optimized
         self.grid_failed = {}
 
+        # List of tasks that derived from a failed job
+        self.task_from_failed = []
+
         # dictionary that stores the geometries corresponding to lowest energy for each grid point
         self.grid_final_geometries = dict()
 
@@ -452,7 +455,6 @@ class DihedralScanner:
             while len(self.current_finished_job_results) > 0:
                 m, grid_id = self.current_finished_job_results.pop()
                 if m.qm_energies[0] is None:
-                    print(f"HEY I FAILED {grid_id}")
                     self.grid_failed[grid_id] = m
                     continue
                 if (
@@ -482,8 +484,9 @@ class DihedralScanner:
                         print(f"First energy for grid_id {grid_id} = {energy}")
                     updating_grid_point = True
 
-                # Check if there's already an option to set this to 0. My hunch is that setting this to zero
-                # will lead to more "consecutive" geometries at the expense of computational time
+                # (Mattia) Check if there's already an option to set self.energy_decrease_thresh to 0.
+                # My hunch is that setting this to zero will lead to more "consecutive" geometries at
+                # the expense of computational time. I.e.:
                 # self.energy_decrease_thresh = 0
 
                 elif energy < self.grid_energies[grid_id] - self.energy_decrease_thresh:
@@ -505,13 +508,22 @@ class DihedralScanner:
 
             logger.debug(f"self.grid_failed: {self.grid_failed}")
 
+            # Jobs that did not return an energy are under self.grid_failed
             for grid_id, m in self.grid_failed.items():
+                # if for this grid point we already have a decent geometry that converged with an energy
+                # we can avoid attempting to run the job from a failed geometry
+                # TODO: we could leave this to the user to decide if they want to retry failed jobs
                 if grid_id not in self.grid_energies:
+                    # if the failed task comes from an already failed task, it is wise to stop the propagation
+                    if grid_id in self.task_from_failed:
+                        continue
                     newly_updated_grid_m.append((grid_id, m))
 
             for grid_id, m in newly_updated_grid_m:
                 # every neighbor grid point will get one new task
                 for neighbor_grid_id in self.grid_neighbors(grid_id):
+                    if grid_id in self.grid_failed:
+                        self.task_from_failed.append(neighbor_grid_id)
                     task = m, grid_id, neighbor_grid_id
                     # validate task before pushing
                     if self.validate_task(task):
