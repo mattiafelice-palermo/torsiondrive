@@ -218,7 +218,7 @@ class DihedralScanner:
         self.grid_failed = {}
 
         # List of tasks that derived from a failed job
-        self.task_from_failed = []
+        self.tasks_from_failed = []
 
         # dictionary that stores the geometries corresponding to lowest energy for each grid point
         self.grid_final_geometries = dict()
@@ -415,18 +415,7 @@ class DihedralScanner:
             counter += 1
             logger.debug(f"###---------- ITERATION {counter} ----------###")
 
-            # check if it's time to show the status
-            current_time = time.time()
-            if self.verbose and current_time - last_print_time > min_print_interval:
-                print("Scan Status at %d s" % (current_time - start_time))
-                try:
-                    if len(self.dihedrals) == 2:
-                        print(self.draw_ramachandran_plot())
-                    else:
-                        print(self.draw_ansi_image())
-                except UnicodeEncodeError:
-                    print("Warning: UnicodeEncodeError occured, status map not printed.")
-                last_print_time = current_time
+            if counter == 1: self.show_progress()
 
             # Launch all jobs in self.opt_queue
             # new jobs will be put into self.running_job_path_info
@@ -440,7 +429,7 @@ class DihedralScanner:
                 logger.debug(f"Length of running_job_path_info: {len(self.running_job_path_info)}")
                 logger.debug(f"Content of self.running_job_path_info:\n {self.running_job_path_info}")
                 self.wait_extract_finished_jobs()  # here the geometry gets extracted
-                logger.debug("Calculations finished and structures have been extracted")
+                logger.debug("Structures have been extracted")
 
             # Probably self.current_finished_job_results returns something like:
             # {'opt_tmp/gid_-060/6': (<geometric.molecule.Molecule object at 0x7fd285e43790>, (-60,), (-60,))}
@@ -452,25 +441,44 @@ class DihedralScanner:
             # check all finished jobs and keep the best ones for the current iteration
             current_best_grid_m = dict()
             logger.debug(f"Length of current_finished_job_results: {len(self.current_finished_job_results)}")
+
+            jobs_failed_in_the_current_iteration = {}
+
             while len(self.current_finished_job_results) > 0:
                 m, grid_id = self.current_finished_job_results.pop()
+                # Checking for grid_id in current_best_grid_m avoids setting a dihedral as failed
+                # if two calculations came from a differet angle, one succeeded and the other failed
+
                 if m.qm_energies[0] is None:
-                    self.grid_failed[grid_id] = m
-                    continue
+                    if grid_id in current_best_grid_m:
+                        print(f"Calculation failed for grid_id {grid_id} from {m.parent}")
+                        self.grid_failed.pop(grid_id, None)
+                        jobs_failed_in_the_current_iteration.pop(grid_id, None)
+                        continue
+                    else:
+                        jobs_failed_in_the_current_iteration[grid_id] = m
+                        self.grid_failed[grid_id] = m
+                        print(f"Calculation failed for grid_id {grid_id} from {m.parent}")
+                        continue
+                # in case a previously failed dihedral now has a converged geom and energy
+                # remove it from failed list
+                self.grid_failed.pop(grid_id, None)
+
                 if (
                     grid_id not in current_best_grid_m
                     or m.qm_energies[0] < current_best_grid_m[grid_id].qm_energies[0]
                 ):
                     current_best_grid_m[grid_id] = m
 
-            logger.debug(f"current_best_grid_m: {current_best_grid_m}")
+            logger.debug("Optimizations that converged and resulted in a geometry + energy"
+                         f"current_best_grid_m]: {current_best_grid_m}")
 
             # we only want refined results in current iteration to show in draw_ramachandran_plot()
             self.refined_grid_ids = set()
 
             # compare the best results between current iteration and all previous iterations
-            # newly_updated_grid_m will contain (grid_id, m) for new angles calculated in this cycle OR angles for which energy decreased
-            newly_updated_grid_m = []
+            # new_or_improved_dihedrals will contain (grid_id, m) for new angles calculated in this cycle OR angles for which energy decreased
+            new_or_improved_dihedrals = []
             for grid_id, m in current_best_grid_m.items():
                 energy = m.qm_energies[0]
 
@@ -502,45 +510,49 @@ class DihedralScanner:
                     self.grid_final_geometries[grid_id] = m.xyzs[0]
                     if hasattr(m, "qm_grads"):
                         self.grid_final_gradients[grid_id] = m.qm_grads[0]
-                    newly_updated_grid_m.append((grid_id, m))
+                    new_or_improved_dihedrals.append((grid_id, m))
 
-            # create new tasks for each newly_updated_grid_m
+            logger.debug(f"New angles or angles with an energy lower than previous entries "
+                         f"new_or_improved_dihedrals: {new_or_improved_dihedrals}")
+            # create new tasks for each new_or_improved_dihedrals
 
             logger.debug(f"self.grid_failed: {self.grid_failed}")
 
             # Jobs that did not return an energy are under self.grid_failed
-            for grid_id, m in self.grid_failed.items():
+            for grid_id, m in jobs_failed_in_the_current_iteration.items():
                 # if for this grid point we already have a decent geometry that converged with an energy
-                # we can avoid attempting to run the job from a failed geometry
+                # we can avoid attempting to run a new job from a geometry obtained from a failed optimization
                 # TODO: we could leave this to the user to decide if they want to retry failed jobs
                 if grid_id not in self.grid_energies:
                     # if the failed task comes from an already failed task, it is wise to stop the propagation
-                    if grid_id in self.task_from_failed:
+                    if (grid_id, m.parent) in self.tasks_from_failed:
+                        self.tasks_from_failed.remove((grid_id, m.parent))
                         continue
-                    newly_updated_grid_m.append((grid_id, m))
+                    print(grid_id)
+                    new_or_improved_dihedrals.append((grid_id, m))
 
-            for grid_id, m in newly_updated_grid_m:
+            # Create new tasks from the new/improved dihedrals
+            print(f"Pushing new tasks (parent_dihedral) -> (new_dihedral)")
+
+            for grid_id, m in new_or_improved_dihedrals:
                 # every neighbor grid point will get one new task
                 for neighbor_grid_id in self.grid_neighbors(grid_id):
-                    if grid_id in self.grid_failed:
-                        self.task_from_failed.append(neighbor_grid_id)
+                    if grid_id in jobs_failed_in_the_current_iteration: # flag tasks stemming from failed calcs
+                        self.tasks_from_failed.append((neighbor_grid_id, grid_id))
                     task = m, grid_id, neighbor_grid_id
+                    print(f"{grid_id} -> {neighbor_grid_id}", end=", ")
                     # validate task before pushing
                     if self.validate_task(task):
                         # all jobs are pushed with the same priority for now, can be adjusted here
                         self.opt_queue.push(task)
+            print() # reset the line terminator
+            
+            self.show_progress()
 
             # check if all jobs finished
             if len(self.opt_queue) == 0 and len(self.running_job_path_info) == 0:
                 print("All optimizations converged at lowest energy. Job Finished!")
                 break
-
-        print("Scan Status at %d s" % (current_time - start_time))
-
-        if len(self.dihedrals) == 2:
-            print(self.draw_ramachandran_plot())
-        else:
-            print(self.draw_ansi_image())
 
         # the finish function will write files like scan.xyz, qdata.txt to disk
         self.finish()
@@ -548,6 +560,17 @@ class DihedralScanner:
     # ----------------------------------
     # Utility methods Called by Master
     # ----------------------------------
+
+    def show_progress(self):
+        if not self.verbose:
+            return
+        try:
+            if len(self.dihedrals) == 2:
+                print(self.draw_ramachandran_plot())
+            else:
+                print(self.draw_ansi_image())
+        except UnicodeEncodeError:
+            print("Warning: UnicodeEncodeError occured, status map not printed.")
 
     def validate_task(self, task):
         """
@@ -720,16 +743,19 @@ class DihedralScanner:
         assert hasattr(self, "running_job_path_info") and hasattr(self, "current_finished_job_results")
         while len(self.opt_queue) > 0:
             m, from_grid_id, to_grid_id = self.opt_queue.pop()
-            logger.debug(f"Launching optimization for {to_grid_id} (from {from_grid_id})")
+            m.parent = from_grid_id
             # check if this job already exists
             m_geo_key = get_geo_key(m.xyzs[0])
-            logger.debug(f"self.task_cache = {self.task_cache}")
+            #logger.debug(f"self.task_cache = {self.task_cache}")
             if m_geo_key in self.task_cache[to_grid_id]:
+                logger.debug(f"Retrieving results from cache for {to_grid_id} (from {from_grid_id})")
                 final_geo, final_energy, final_gradient, job_folder = self.task_cache[to_grid_id][m_geo_key]
                 result_m = Molecule()
                 result_m.elem = list(m.elem)
                 result_m.xyzs = [final_geo]
                 result_m.qm_energies = [final_energy]
+                result_m.parent = from_grid_id
+                
                 if final_gradient is not None:
                     result_m.qm_grads = [final_gradient]
                 result_m.build_topology()
@@ -742,10 +768,11 @@ class DihedralScanner:
                     self.current_finished_job_results.push((result_m, grid_id), priority=job_folder)
                 # self.grid_status[to_grid_id].append((m.xyzs[0], final_geo, final_energy))
             else:
+                logger.debug(f"Launching optimization for {to_grid_id} (from {from_grid_id})")
                 job_path = self.launch_constrained_opt(m, to_grid_id)
                 self.running_job_path_info[job_path] = m, from_grid_id, to_grid_id
 
-    def launch_constrained_opt(self, molecule, grid_id):
+    def launch_constrained_opt(self, molecule, grid_id) -> str:
         """
         Called by launch_opt_jobs() to launch one opt job in a new scr folder
         Return the new folder path
@@ -810,6 +837,7 @@ class DihedralScanner:
             logger.debug(f"{job_path} popped from queue: {m_init}, {from_grid_id}, {to_grid_id}")
             # call the engine to parse output file and return a molecule object containig the final energy and geometry
             m = self.engine.load_task_result_m(job_path, grid_id=to_grid_id)
+            m.parent = m_init.parent
 
             # if m is None, it means no geometry has been generated
             if m is not None:
@@ -818,11 +846,13 @@ class DihedralScanner:
                 # we will check here if the optimized structure has (at least) the desired dihedral ids
                 grid_id = self.get_dihedral_id(m, check_grid_id=to_grid_id)
             else:
+                logger.debug(f"Constrained optimization result at {job_path} is skipped and not saved to cache, because no geometry has been generated")
                 return
 
             if grid_id is None:
+
                 print(
-                    f"Constrained optimization result at {job_path} is skipped, because final geometry is far from grid id {to_grid_id}"
+                    f"Constrained optimization result at {job_path} is skipped and not save to cache, because final geometry is far from grid id {to_grid_id}"
                 )
                 return
 
