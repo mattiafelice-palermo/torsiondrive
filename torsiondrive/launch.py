@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from .dihedral_scanner import DihedralScanner
-from .qm_engine import EngineASE, EnginePsi4, EngineQChem, EngineTerachem, EngineOpenMM, EngineGaussian, EnginexTB
+from .qm_engine import EngineASE, EnginePsi4, EngineQChem, EngineTerachem, EngineOpenMM, EngineGaussian, EnginexTB, EngineOrca
 from .extra_constraints import make_constraints_dict, check_conflict_constraints
 from geometric.molecule import Molecule
 import shutil
@@ -155,6 +155,7 @@ def create_engine(enginename, inputfile=None, work_queue_port=None, native_opt=F
         "terachem": EngineTerachem,
         "openmm": EngineOpenMM,
         "gaussian": EngineGaussian,
+        "orca": EngineOrca,
     }
     # initialize a work_queue
     if work_queue_port is not None:
@@ -343,7 +344,7 @@ def main():
         "--engine",
         type=str,
         default="psi4",
-        choices=["ase", "qchem", "psi4", "terachem", "openmm", "gaussian", "xtb"],
+        choices=["ase", "qchem", "psi4", "terachem", "openmm", "gaussian", "xtb", "orca"],
         help="Engine for running scan",
     )
     parser.add_argument(

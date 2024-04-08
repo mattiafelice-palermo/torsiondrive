@@ -412,6 +412,186 @@ class EnginePsi4(QMEngine):
         return m
 
 
+class EngineOrca(QMEngine):
+    def load_input(self, input_file):
+        """ Load input geometry and variables from ORCA input file
+        
+        Parses an ORCA input file to extract the geometry, elements, charge, multiplicity
+        and command line. The geometry can either be explicitly given in the input file 
+        or read from an external XYZ file pointed to from the input.
+        
+        Args:
+          input_file (str): Path to ORCA input file
+        
+        Returns: 
+          None
+        
+        Sets:
+          self.M (Molecule): Molecular structure
+          self.command_line (str): ORCA command line 
+        """
+        coords = []
+        elems = []
+        self.command_line = str()
+        filename = str()
+        read_option = False
+        read_from_file = False
+        reading_molecule, found_geo = False, False
+        self.temp_type = "optimize"
+        self.option_commands = []
+
+        current_option = ""
+
+        with open(input_file) as orca_input:
+            for line in orca_input:
+                if "!" in line:
+                    self.command_line = line
+                    continue
+
+                # Reading options
+                if line.lower().startswith("%") and line.lower().strip().endswith("end"):
+                    self.option_commands.append(line)
+                    continue
+                if line.startswith("%"):
+                    read_option = True
+                    current_option = line
+                    continue
+                if read_option is True and line.lower().strip() == "end":
+                    read_option = False
+                    self.option_commands.append(current_option+"end\n")
+                    current_option = ""
+                    continue
+                if read_option is True:
+                    current_option += line
+                    continue
+
+                # Read geometries
+                if "xyzfile" in line:
+                    self.charge, self.multiplicity = int(line.split()[2]), int(line.split()[2]) # * xyzfile chrg mult filename
+                    filename = line.split()[-1] # breaks for uneducated users using filenames with spaces and no ""
+                    read_from_file = True
+                    break
+                if "xyz " in line:
+                    reading_molecule = True
+                    self.charge, self.multiplicity = int(line.split()[-2]), int(line.split()[-1]) # * xyz chrg mult 
+                    continue
+                if reading_molecule is True:
+                    splitted_line = line.split()
+                    if len(splitted_line) == 4 and check_all_float(splitted_line[1:]):
+                        elems.append(splitted_line[0])
+                        coords.append(splitted_line[1:4])
+                if reading_molecule is True and "*" in line:
+                    reading_molecule = False
+
+        if read_from_file:
+            with open(filename) as xyzfile:
+                for line in xyzfile:
+                    splitted_line = line.split()
+                    if len(splitted_line) == 4 and check_all_float(splitted_line[1:]):
+                        elems.append(splitted_line[0])
+                        coords.append(splitted_line[1:4])
+
+        if elems == [] or coords == []:
+            raise ValueError("No geometry found in %s" % input_file)
+
+        # here self.M can be and will be overwritten by external functions
+        self.M = Molecule()
+        self.M.elem = elems
+        self.M.xyzs = [np.array(coords, dtype=float)]
+        self.M.build_topology()
+
+    def write_input(self, filename="input.dat"):
+        """Write output based on self.psi4_temp and self.M, using only geometry of the first frame"""
+
+        with open(filename, "w") as outfile:
+            outfile.write(self.command_line)
+
+            outfile.write("\n* xyz %i %i\n" % (self.charge, self.multiplicity))
+
+            for e,c in zip(self.M.elem, self.M.xyzs[0]):
+                outfile.write("%-7s %13.7f %13.7f %13.7f\n" % (e, c[0], c[1], c[2]))
+            outfile.write("*\n\n")
+
+            outfile.write(self.orca_constraint_string+"\n")
+
+            for command in self.option_commands:
+                outfile.write(command+"\n")
+
+    def optimize_native(self):
+        """run the constrained optimization using native Optking, in 2 steps:
+        1. write a optimization job input file.
+        2. run the job
+        """
+
+        """ ORCA CONSTRAINT FORMAT
+        %geom
+        Constraints
+        {D 0 1 2 3 value C } # D for Dihedral angle
+        end
+        end
+        """
+
+        assert self.temp_type == "optimize", "To use native optimization, the input file should have optimize() in it"
+
+        for d1, d2, d3, d4, v in self.dihedral_idx_values:
+            while v < 0:
+                v += 360.0            
+            self.orca_constraint_string = f'''%geom\nConstraints\n{{D {d1} {d2} {d3} {d4} {v} C}}\nend\nend\n'''
+                    
+        if self.extra_constraints is not None:
+            raise RuntimeError("extra constraints not supported in Psi4 native optimizations")
+
+        # write input file
+        self.write_input("input.dat")
+        # run the job
+        self.run("$(which orca) input.dat > output.dat 2> output.err", input_files=["input.dat"], output_files=["output.dat"])
+
+    def optimize_geomeTRIC(self):
+        pass
+
+    def load_native_output(self, filename="output.dat", grid_id=None):
+        """Load the optimized geometry and energy into a new molecule object and return"""
+        has_converged = False
+        found_opt_result = False
+        last_energy, elems, coords = None, [], []
+
+        with open("input.xyz") as xyzfile:
+             for line in xyzfile:
+                splitted_line = line.split()
+                if len(splitted_line) == 4 and check_all_float(splitted_line[1:]):
+                    elems.append(splitted_line[0])
+                    coords.append(splitted_line[1:4])
+
+        with open("output.dat") as outfile:
+            for line in outfile:
+                line = line.strip()
+                if "THE OPTIMIZATION HAS CONVERGED" in line:
+                    has_converged = True
+
+                if "FINAL SINGLE POINT ENERGY" in line:
+                    last_energy = float(line.split()[-1])
+
+        if not has_converged:
+            logger.warning("Optimization not converged for %s" % filename)
+
+        if last_energy is None:
+            logger.warning("Final energy not found in %s" % filename)
+
+        if len(elems) == 0 or len(coords) == 0:
+            logger.warning("Final geometry not found in %s" % filename)
+            return None
+
+        # overwrite self.M
+        m = Molecule()
+        m.elem = elems
+        m.xyzs = [np.array(coords, dtype=float)]
+        m.qm_energies = [last_energy]
+        if not has_converged:
+            m.qm_energies = [None]  # we're not interested in the energy of a non converged optimization
+        m.build_topology()
+        return m
+
+
 class EnginexTB(QMEngine):
     def load_input(self, input_file):
         """Load a xTB input file as a Molecule object into self.M
