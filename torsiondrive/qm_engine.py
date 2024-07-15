@@ -449,6 +449,9 @@ class EngineOrca(QMEngine):
                     continue
 
                 # Reading options
+                if line.lower().startswith("%") and "maxcore" in line.lower():
+                    self.option_commands.append(line)
+                    continue
                 if line.lower().startswith("%") and line.lower().strip().endswith("end"):
                     self.option_commands.append(line)
                     continue
@@ -464,10 +467,10 @@ class EngineOrca(QMEngine):
                 if read_option is True:
                     current_option += line
                     continue
-
+                
                 # Read geometries
                 if "xyzfile" in line:
-                    self.charge, self.multiplicity = int(line.split()[2]), int(line.split()[2]) # * xyzfile chrg mult filename
+                    self.charge, self.multiplicity = int(line.split()[-3]), int(line.split()[-2]) # * xyzfile chrg mult filename
                     filename = line.split()[-1] # breaks for uneducated users using filenames with spaces and no ""
                     read_from_file = True
                     break
@@ -502,7 +505,6 @@ class EngineOrca(QMEngine):
 
     def write_input(self, filename="input.dat"):
         """Write output based on self.psi4_temp and self.M, using only geometry of the first frame"""
-
         with open(filename, "w") as outfile:
             outfile.write(self.command_line)
 
